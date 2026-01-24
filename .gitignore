@@ -1,0 +1,8 @@
+*.pyc
+temp
+scratch.py
+runs
+.vscode
+*.dat
+models
+runpod_models

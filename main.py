@@ -1,0 +1,5 @@
+from game import JungleOptimizer
+
+WINDOW_WIDTH, WINDOW_HEIGHT = 1200, 800
+WORLD_WIDTH, WORLD_HEIGHT = 1800, 1200 
+FPS = 60

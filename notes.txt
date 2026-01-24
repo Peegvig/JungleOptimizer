@@ -1,0 +1,1 @@
+may need to tweak --extra-index-url https://download.pytorch.org/whl/cu118 in requirements.txt for my specific gpu

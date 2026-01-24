@@ -1,0 +1,11 @@
+pygame==2.6.1
+gymnasium==1.0.0
+opencv-python==4.10.0.84
+matplotlib==3.8.2
+tensorboard==2.15.1
+memory_profiler
+pympler
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch
+torchvision
+torchaudio
