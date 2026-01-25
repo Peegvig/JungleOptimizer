@@ -4,7 +4,16 @@ WINDOW_WIDTH, WINDOW_HEIGHT = 1200, 800
 WORLD_WIDTH, WORLD_HEIGHT = 1800, 1200 
 FPS = 60
 
-game = JungleOptimizer(window_height=WINDOW_HEIGHT,window_width=WINDOW_WIDTH,world_height=WORLD_HEIGHT,world_width=WORLD_WIDTH, fps=FPS, sound=True)
+# Choose champion: "Amumu", "Lee_Sin", or "Elise"
+game = JungleOptimizer(
+    window_height=WINDOW_HEIGHT,
+    window_width=WINDOW_WIDTH,
+    world_height=WORLD_HEIGHT,
+    world_width=WORLD_WIDTH,
+    fps=FPS,
+    champion="Amumu",  # Change this to "Lee_Sin" or "Elise" to play different champions
+    sound=True
+)
 
 # Game loop
 
