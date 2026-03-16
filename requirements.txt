@@ -9,3 +9,4 @@ pympler
 torch
 torchvision
 torchaudio
+shapely

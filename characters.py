@@ -6,14 +6,13 @@ from util import *
 class Champion:
     """Base class for all playable champions"""
 
-    def __init__(self, world_width, world_height, walls):
+    def __init__(self, world_width, world_height):
         self.size = 55
         self.x = 2000
         self.y = 2720
         
         self.world_width = world_width
         self.world_height = world_height
-        self.walls = walls
         
         # Base stats - override in subclasses
         self.speed = 5
@@ -33,6 +32,10 @@ class Champion:
         self.target_x = None
         self.target_y = None
         self.is_moving = False
+        
+        # Wall pass-through tag system
+        self.can_pass_walls = False  # By default, units cannot pass walls
+        self.wall_pass_tags = set()  # Set of tags that allow wall passing
         
         # Ability cooldowns (in frames)
         self.auto_attack_cooldown = 0
@@ -56,11 +59,10 @@ class Champion:
         
         # Draw circle (use a semi-transparent color as fallback)
         if self.images:
-            # Draw image centered on position
-            screen.blit(self.images, (screen_x - self.radius, screen_y - self.radius))
+            screen.blit(self.images, (int(screen_x - self.radius), int(screen_y - self.radius)))
         else:
             # Draw a simple circle if no image
-            pygame.draw.circle(screen, (255, 0, 0), (int(screen_x), int(screen_y)), self.radius)
+            pygame.draw.circle(screen, (255, 0, 0), (int(screen_x), int(screen_y)), int(self.radius))
 
     def set_target(self, target_x, target_y):
         """Set movement target position"""
@@ -68,8 +70,30 @@ class Champion:
         self.target_y = target_y
         self.is_moving = True
 
-    def update_movement(self, collide_with=None):
-        """Update champion position towards target"""
+    def add_wall_pass_tag(self, tag):
+        """Add a tag that allows this unit to pass through walls"""
+        self.wall_pass_tags.add(tag)
+    
+    def remove_wall_pass_tag(self, tag):
+        """Remove a wall pass tag"""
+        self.wall_pass_tags.discard(tag)
+    
+    def has_wall_pass_tag(self, tag):
+        """Check if this unit has a specific wall pass tag"""
+        return tag in self.wall_pass_tags
+    
+    def can_pass_wall(self):
+        """Check if this unit can currently pass through walls"""
+        return len(self.wall_pass_tags) > 0
+
+    def update_movement(self, collide_with=None, walls=None, can_pass_walls=False):
+        """Update champion position towards target
+        
+        Args:
+            collide_with: Another champion to check collision with
+            walls: List of wall rectangles to check collision with
+            can_pass_walls: (Deprecated - use add_wall_pass_tag() instead)
+        """
         if not self.is_moving or self.target_x is None or self.target_y is None:
             return
         
@@ -100,10 +124,46 @@ class Champion:
             self.x += move_x
             self.y += move_y
             
-            # Check collision and revert if colliding
+            # Check collisions
+            collision_detected = False
+            
+            # Check character collision
             if collide_with and self.check_collision(collide_with):
+                collision_detected = True
+            
+            # Check wall collision (unless unit can pass walls)
+            if walls and self.check_wall_collision(walls):
+                collision_detected = True
+            
+            # Revert if collision detected
+            if collision_detected:
                 self.x = old_x
                 self.y = old_y
+
+    def check_wall_collision(self, walls):
+        """Check if champion circle collides with any wall rectangles.
+        Returns True if collision detected and unit cannot pass walls.
+        Returns False if unit has wall pass tags or no collision occurs.
+        """
+        # If unit can pass walls, don't check collision
+        if self.can_pass_wall():
+            return False
+        
+        for wall in walls:
+            # Find closest point on rectangle to circle center
+            closest_x = max(wall.left, min(self.x, wall.right))
+            closest_y = max(wall.top, min(self.y, wall.bottom))
+            
+            # Calculate distance between closest point and circle center
+            dx = self.x - closest_x
+            dy = self.y - closest_y
+            distance = math.sqrt(dx**2 + dy**2)
+            
+            # If distance is less than radius, there's a collision
+            if distance < self.radius:
+                return True
+        
+        return False
 
     def check_collision(self, other):
         """Check circle collision with another champion"""
@@ -163,8 +223,8 @@ class Champion:
 class Amumu(Champion):
     """The Sad Mummy - Tank jungler"""
 
-    def __init__(self, world_width, world_height, walls):
-        super().__init__(world_width, world_height, walls)
+    def __init__(self, world_width, world_height):
+        super().__init__(world_width, world_height)
         
         # Amumu stats
         self.speed = 3.35
@@ -220,8 +280,8 @@ class Amumu(Champion):
 class LeeSin(Champion):
     """The Blind Monk - Skill-based jungler"""
 
-    def __init__(self, world_width, world_height, walls):
-        super().__init__(world_width, world_height, walls)
+    def __init__(self, world_width, world_height):
+        super().__init__(world_width, world_height)
         
         # Lee Sin stats
         self.speed = 6
@@ -277,8 +337,8 @@ class LeeSin(Champion):
 class Elise(Champion):
     """The Spider Queen - Versatile jungler"""
 
-    def __init__(self, world_width, world_height, walls):
-        super().__init__(world_width, world_height, walls)
+    def __init__(self, world_width, world_height):
+        super().__init__(world_width, world_height)
         
         # Elise stats
         self.speed = 5
@@ -344,8 +404,124 @@ class Blue:
         self.speed = speed
         self.x = 2340
         self.y = 2790
+        
+        # Wall pass-through tag system
+        self.can_pass_walls = False  # By default, units cannot pass walls
+        self.wall_pass_tags = set()  # Set of tags that allow wall passing
+        
+        # Movement
+        self.target_x = None
+        self.target_y = None
+        self.is_moving = False
   
         self.images = pygame.transform.scale(pygame.image.load("images/blueC.png"), (self.size, self.size))
+    
+    def add_wall_pass_tag(self, tag):
+        """Add a tag that allows this unit to pass through walls"""
+        self.wall_pass_tags.add(tag)
+    
+    def remove_wall_pass_tag(self, tag):
+        """Remove a wall pass tag"""
+        self.wall_pass_tags.discard(tag)
+    
+    def has_wall_pass_tag(self, tag):
+        """Check if this unit has a specific wall pass tag"""
+        return tag in self.wall_pass_tags
+    
+    def can_pass_wall(self):
+        """Check if this unit can currently pass through walls"""
+        return len(self.wall_pass_tags) > 0
+    
+    def set_target(self, target_x, target_y):
+        """Set movement target position"""
+        self.target_x = target_x
+        self.target_y = target_y
+        self.is_moving = True
+    
+    def check_wall_collision(self, walls):
+        """Check if unit circle collides with any wall rectangles.
+        Returns True if collision detected and unit cannot pass walls.
+        Returns False if unit has wall pass tags or no collision occurs.
+        """
+        # If unit can pass walls, don't check collision
+        if self.can_pass_wall():
+            return False
+        
+        for wall in walls:
+            # Find closest point on rectangle to circle center
+            closest_x = max(wall.left, min(self.x, wall.right))
+            closest_y = max(wall.top, min(self.y, wall.bottom))
+            
+            # Calculate distance between closest point and circle center
+            dx = self.x - closest_x
+            dy = self.y - closest_y
+            distance = math.sqrt(dx**2 + dy**2)
+            
+            # If distance is less than radius, there's a collision
+            if distance < self.radius:
+                return True
+        
+        return False
+    
+    def check_collision(self, other):
+        """Check circle collision with another unit"""
+        dx = self.x - other.x
+        dy = self.y - other.y
+        distance = math.sqrt(dx**2 + dy**2)
+        return distance < (self.radius + other.radius)
+    
+    def update_movement(self, collide_with=None, walls=None):
+        """Update unit position towards target
+        
+        Args:
+            collide_with: Another unit to check collision with
+            walls: List of wall rectangles to check collision with
+        """
+        if not self.is_moving or self.target_x is None or self.target_y is None:
+            return
+        
+        # Calculate distance to target
+        dx = self.target_x - self.x
+        dy = self.target_y - self.y
+        distance = math.sqrt(dx**2 + dy**2)
+        
+        # Check if reached target
+        if distance < self.speed:
+            self.x = self.target_x
+            self.y = self.target_y
+            self.is_moving = False
+            self.target_x = None
+            self.target_y = None
+            return
+        
+        # Normalize direction and move
+        if distance > 0:
+            move_x = (dx / distance) * self.speed
+            move_y = (dy / distance) * self.speed
+            
+            # Store old position in case we need to revert
+            old_x = self.x
+            old_y = self.y
+            
+            # Update position (x, y is center of circle)
+            self.x += move_x
+            self.y += move_y
+            
+            # Check collisions
+            collision_detected = False
+            
+            # Check unit collision
+            if collide_with and self.check_collision(collide_with):
+                collision_detected = True
+            
+            # Check wall collision (unless unit can pass walls)
+            if walls and self.check_wall_collision(walls):
+                collision_detected = True
+            
+            # Revert if collision detected
+            if collision_detected:
+                self.x = old_x
+                self.y = old_y
     
     def move():
         pass
@@ -358,7 +534,7 @@ class Blue:
         
         # Draw image centered on position
         if self.images:
-            screen.blit(self.images, (screen_x - self.radius, screen_y - self.radius))
+            screen.blit(self.images, (int(screen_x - self.radius), int(screen_y - self.radius)))
         else:
             # Draw a simple circle if no image
-            pygame.draw.circle(screen, (0, 0, 255), (int(screen_x), int(screen_y)), self.radius)
+            pygame.draw.circle(screen, (0, 0, 255), (int(screen_x), int(screen_y)), int(self.radius))
