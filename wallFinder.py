@@ -8,7 +8,6 @@ import json
 
 # Load your wall mask (black = wall, white = floor)
 mask = cv2.imread("images/SRminimap4x.png", cv2.IMREAD_GRAYSCALE)
-import matplotlib.pyplot as plt
 
 # Only very dark pixels = walls
 _, mask1 = cv2.threshold(mask, 30, 255, cv2.THRESH_BINARY_INV)

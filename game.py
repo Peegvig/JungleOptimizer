@@ -91,37 +91,45 @@ class JungleOptimizer():
         self.score = 0
 
     def load_walls_from_json(self, filename):
-        """Load wall polygons from JSON file and convert to pygame Rect objects"""
+        """Load wall polygons from JSON file"""
         walls = []
+        collision_rects = []
+        wall_scale = 5  # Scale walls to match backdrop scale
         try:
             with open(filename, "r") as f:
                 walls_data = json.load(f)
             
             if isinstance(walls_data, list):
                 for polygon_coords in walls_data:
-                    if isinstance(polygon_coords, list) and len(polygon_coords) > 0:
-                        # Extract x and y coordinates
+                    if isinstance(polygon_coords, list) and len(polygon_coords) >= 3:
+                        # Convert coordinates to a list of (x, y) tuples for pygame rendering
+                        coords = []
                         xs = []
                         ys = []
                         for coord in polygon_coords:
                             if isinstance(coord, (list, tuple)) and len(coord) >= 2:
-                                xs.append(coord[0])
-                                ys.append(coord[1])
+                                scaled_x = coord[0] * wall_scale
+                                scaled_y = coord[1] * wall_scale
+                                coords.append((scaled_x, scaled_y))
+                                xs.append(scaled_x)
+                                ys.append(scaled_y)
                         
-                        # Create bounding box rectangle
-                        if xs and ys:
-                            min_x = min(xs)
-                            max_x = max(xs)
-                            min_y = min(ys)
-                            max_y = max(ys)
+                        if len(coords) >= 3:
+                            walls.append(coords)
                             
-                            width = max_x - min_x
-                            height = max_y - min_y
-                            
-                            # Only create rect if it has valid dimensions
-                            if width > 0 and height > 0:
-                                wall_rect = pygame.Rect(min_x, min_y, width, height)
-                                walls.append(wall_rect)
+                            # Create bounding box rect for collision detection
+                            if xs and ys:
+                                min_x = min(xs)
+                                max_x = max(xs)
+                                min_y = min(ys)
+                                max_y = max(ys)
+                                
+                                width = max_x - min_x
+                                height = max_y - min_y
+                                
+                                if width > 0 and height > 0:
+                                    wall_rect = pygame.Rect(min_x, min_y, width, height)
+                                    collision_rects.append(wall_rect)
                 
                 print(f"✓ Loaded {len(walls)} walls from {filename}")
             else:
@@ -133,7 +141,9 @@ class JungleOptimizer():
         except Exception as e:
             print(f"✗ Error loading walls: {e}")
         
-        return walls
+        # Store both visual polygons and collision rects
+        self.wall_polygons = walls
+        return collision_rects
 
 
     def fill_background(self):
@@ -165,13 +175,18 @@ class JungleOptimizer():
             self.screen.fill(self.background_color)
 
         # Draw walls (scaled by zoom)
-        if self.walls:
-            for wall in self.walls:
-                screen_x, screen_y = world_to_screen(wall.left, wall.top)
-                wall_width = wall.width * self.zoom
-                wall_height = wall.height * self.zoom
-                pygame.draw.rect(self.screen, self.wall_color, (screen_x, screen_y, wall_width, wall_height))
-                pygame.draw.rect(self.screen, (0, 100, 0), (screen_x, screen_y, wall_width, wall_height), 2)
+        if hasattr(self, 'wall_polygons') and self.wall_polygons:
+            for wall_polygon in self.wall_polygons:
+                # Convert world coordinates to screen coordinates for all vertices
+                screen_polygon = []
+                for x, y in wall_polygon:
+                    screen_x, screen_y = world_to_screen(x, y)
+                    screen_polygon.append((int(screen_x), int(screen_y)))
+                
+                # Draw filled polygon and outline
+                if len(screen_polygon) >= 3:
+                    pygame.draw.polygon(self.screen, self.wall_color, screen_polygon)
+                    pygame.draw.polygon(self.screen, (0, 100, 0), screen_polygon, 2)
 
         # Draw player and enemies (scaled by zoom)
         screen_x, screen_y = world_to_screen(self.player.x, self.player.y)

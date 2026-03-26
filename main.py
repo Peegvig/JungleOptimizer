@@ -1,7 +1,7 @@
 from game import JungleOptimizer
 
 WINDOW_WIDTH, WINDOW_HEIGHT = 1200, 800
-WORLD_WIDTH, WORLD_HEIGHT = 1800, 1200 
+WORLD_WIDTH, WORLD_HEIGHT = 2048, 2048  # Match minimap size for proper wall scaling
 FPS = 60
 
 # Choose champion: "Amumu", "Lee_Sin", or "Elise"
