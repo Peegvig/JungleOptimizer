@@ -8,7 +8,7 @@ from util import *
 
 class JungleOptimizer():
     
-    def __init__(self, window_width, window_height, world_height, world_width, fps, champion="Amumu", sound=False):
+    def __init__(self, window_width, window_height, world_height, world_width, fps, champion="Amumu"):
         
         self.window_width = window_width
         self.window_height = window_height
@@ -71,9 +71,8 @@ class JungleOptimizer():
         # Load backdrop image (optional - falls back to color if not found)
         try:
             self.backdrop = pygame.image.load("images/SRminimap4x.png")
-            # Scale backdrop to be much bigger (3x the world size)
-            backdrop_scale = 5
-            self.backdrop = pygame.transform.scale(self.backdrop, (world_width * backdrop_scale, world_height * backdrop_scale))
+            # Scale backdrop to match world dimensions (4x already has 5x scale built in)
+            self.backdrop = pygame.transform.scale(self.backdrop, (world_width, world_height))
         except:
             self.backdrop = None
         
@@ -130,20 +129,35 @@ class JungleOptimizer():
                                 if width > 0 and height > 0:
                                     wall_rect = pygame.Rect(min_x, min_y, width, height)
                                     collision_rects.append(wall_rect)
-                
-                print(f"✓ Loaded {len(walls)} walls from {filename}")
-            else:
-                print(f"✗ Unexpected wall data format in {filename}")
         except FileNotFoundError:
-            print(f"✗ Wall file {filename} not found")
+            print(f"[ERROR] Wall file {filename} not found")
         except json.JSONDecodeError as e:
-            print(f"✗ Error parsing {filename}: {e}")
+            print(f"[ERROR] Error parsing {filename}: {e}")
         except Exception as e:
-            print(f"✗ Error loading walls: {e}")
+            print(f"[ERROR] Error loading walls: {e}")
         
         # Store both visual polygons and collision rects
         self.wall_polygons = walls
+        
+        # Pre-compute bounding boxes for frustum culling
+        self.wall_bounds = []
+        for polygon in walls:
+            xs = [x for x, y in polygon]
+            ys = [y for x, y in polygon]
+            if xs and ys:
+                self.wall_bounds.append((min(xs), max(xs), min(ys), max(ys)))
+            else:
+                self.wall_bounds.append(None)
+        
         return collision_rects
+    
+    def debug_print_walls(self):
+        """Print wall bounds for debugging"""
+        if self.walls:
+            print(f"\\n=== WALL BOUNDS ===")
+            for i, wall in enumerate(self.walls[:5]):  # Print first 5
+                print(f"  Wall {i}: ({wall.left}, {wall.top}) -> ({wall.right}, {wall.bottom}) size=({wall.width}x{wall.height})")
+            print(f"  ... and {len(self.walls) - 5} more walls")
 
 
     def fill_background(self):
@@ -174,19 +188,31 @@ class JungleOptimizer():
         else:
             self.screen.fill(self.background_color)
 
-        # Draw walls (scaled by zoom)
+        # Draw walls (scaled by zoom) - outline only, on-screen only for better performance
         if hasattr(self, 'wall_polygons') and self.wall_polygons:
-            for wall_polygon in self.wall_polygons:
+            # Calculate camera bounds for frustum culling
+            cam_left = self.camera_x
+            cam_right = self.camera_x + self.window_width / self.zoom
+            cam_top = self.camera_y
+            cam_bottom = self.camera_y + self.window_height / self.zoom
+            
+            for i, wall_polygon in enumerate(self.wall_polygons):
+                # Use pre-computed bounds for quick frustum culling
+                if i < len(self.wall_bounds) and self.wall_bounds[i]:
+                    min_x, max_x, min_y, max_y = self.wall_bounds[i]
+                    # Skip if wall is completely off-screen
+                    if max_x < cam_left or min_x > cam_right or max_y < cam_top or min_y > cam_bottom:
+                        continue
+                
                 # Convert world coordinates to screen coordinates for all vertices
                 screen_polygon = []
                 for x, y in wall_polygon:
                     screen_x, screen_y = world_to_screen(x, y)
                     screen_polygon.append((int(screen_x), int(screen_y)))
                 
-                # Draw filled polygon and outline
+                # Draw outline only with thicker border (faster than filled)
                 if len(screen_polygon) >= 3:
-                    pygame.draw.polygon(self.screen, self.wall_color, screen_polygon)
-                    pygame.draw.polygon(self.screen, (0, 100, 0), screen_polygon, 2)
+                    pygame.draw.polygon(self.screen, (0, 100, 0), screen_polygon, 3)
 
         # Draw player and enemies (scaled by zoom)
         screen_x, screen_y = world_to_screen(self.player.x, self.player.y)
@@ -245,10 +271,7 @@ class JungleOptimizer():
                 sys.exit()
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Left click - helper to get coordinates
-                    mouse_x, mouse_y = event.pos
-                    world_x = mouse_x / self.zoom + self.camera_x
-                    world_y = mouse_y / self.zoom + self.camera_y
-                    print(f"Left-clicked at: x={world_x:.1f}, y={world_y:.1f}")
+                    pass
                 elif event.button == 3:  # Right click pressed
                     self.right_mouse_pressed = True
                     # Convert screen position to world position
@@ -330,8 +353,8 @@ class JungleOptimizer():
             self.camera_following = False
 
         # Update champion movement and cooldowns
-        self.player.update_movement(collide_with=self.blue, walls=self.walls)
-        self.blue.update_movement(collide_with=self.player, walls=self.walls)
+        self.player.update_movement(collide_with=self.blue, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
+        self.blue.update_movement(collide_with=self.player, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
         self.player.update_cooldowns()
 
         self.fill_background()

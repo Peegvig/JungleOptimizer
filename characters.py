@@ -8,8 +8,8 @@ class Champion:
 
     def __init__(self, world_width, world_height):
         self.size = 55
-        self.x = 2000
-        self.y = 2720
+        self.x = 2135
+        self.y = 4711
         
         self.world_width = world_width
         self.world_height = world_height
@@ -52,18 +52,6 @@ class Champion:
         # Load champion image - override in subclasses
         self.images = None
 
-    def draw(self, screen, camera_x, camera_y):
-        # Draw circle at center position
-        screen_x = self.x - camera_x
-        screen_y = self.y - camera_y
-        
-        # Draw circle (use a semi-transparent color as fallback)
-        if self.images:
-            screen.blit(self.images, (int(screen_x - self.radius), int(screen_y - self.radius)))
-        else:
-            # Draw a simple circle if no image
-            pygame.draw.circle(screen, (255, 0, 0), (int(screen_x), int(screen_y)), int(self.radius))
-
     def set_target(self, target_x, target_y):
         """Set movement target position"""
         self.target_x = target_x
@@ -86,12 +74,14 @@ class Champion:
         """Check if this unit can currently pass through walls"""
         return len(self.wall_pass_tags) > 0
 
-    def update_movement(self, collide_with=None, walls=None, can_pass_walls=False):
+    def update_movement(self, collide_with=None, walls=None, wall_polygons=None, wall_bounds=None, can_pass_walls=False):
         """Update champion position towards target
         
         Args:
             collide_with: Another champion to check collision with
-            walls: List of wall rectangles to check collision with
+            walls: (Deprecated) List of wall bounding-box rectangles
+            wall_polygons: List of polygon coordinate lists for accurate collision
+            wall_bounds: List of (min_x, max_x, min_y, max_y) tuples for fast culling
             can_pass_walls: (Deprecated - use add_wall_pass_tag() instead)
         """
         if not self.is_moving or self.target_x is None or self.target_y is None:
@@ -126,22 +116,26 @@ class Champion:
             
             # Check collisions
             collision_detected = False
+            collision_reason = ""
             
             # Check character collision
             if collide_with and self.check_collision(collide_with):
                 collision_detected = True
+                collision_reason = "character collision"
             
             # Check wall collision (unless unit can pass walls)
-            if walls and self.check_wall_collision(walls):
-                collision_detected = True
+            if wall_polygons:
+                if self.check_wall_collision(wall_polygons, wall_bounds):
+                    collision_detected = True
+                    collision_reason = "wall collision"
             
             # Revert if collision detected
             if collision_detected:
                 self.x = old_x
                 self.y = old_y
 
-    def check_wall_collision(self, walls):
-        """Check if champion circle collides with any wall rectangles.
+    def check_wall_collision(self, wall_polygons, wall_bounds=None):
+        """Check if champion circle collides with any wall polygons.
         Returns True if collision detected and unit cannot pass walls.
         Returns False if unit has wall pass tags or no collision occurs.
         """
@@ -149,19 +143,25 @@ class Champion:
         if self.can_pass_wall():
             return False
         
-        for wall in walls:
-            # Find closest point on rectangle to circle center
-            closest_x = max(wall.left, min(self.x, wall.right))
-            closest_y = max(wall.top, min(self.y, wall.bottom))
+        for i, polygon in enumerate(wall_polygons):
+            # Fast bounding-box pre-filter
+            if wall_bounds and i < len(wall_bounds) and wall_bounds[i]:
+                min_x, max_x, min_y, max_y = wall_bounds[i]
+                if (self.x + self.radius < min_x or self.x - self.radius > max_x or
+                        self.y + self.radius < min_y or self.y - self.radius > max_y):
+                    continue
             
-            # Calculate distance between closest point and circle center
-            dx = self.x - closest_x
-            dy = self.y - closest_y
-            distance = math.sqrt(dx**2 + dy**2)
-            
-            # If distance is less than radius, there's a collision
-            if distance < self.radius:
+            # Check if circle center is inside the polygon
+            if point_in_polygon(self.x, self.y, polygon):
                 return True
+            
+            # Check distance from circle center to each polygon edge
+            n = len(polygon)
+            for j in range(n):
+                x1, y1 = polygon[j]
+                x2, y2 = polygon[(j + 1) % n]
+                if point_to_segment_distance(self.x, self.y, x1, y1, x2, y2) < self.radius:
+                    return True
         
         return False
 
@@ -402,8 +402,8 @@ class Blue:
         self.world_width = world_width
         self.world_height = world_height
         self.speed = speed
-        self.x = 2340
-        self.y = 2790
+        self.x = 2627
+        self.y = 4794
         
         # Wall pass-through tag system
         self.can_pass_walls = False  # By default, units cannot pass walls
@@ -438,8 +438,8 @@ class Blue:
         self.target_y = target_y
         self.is_moving = True
     
-    def check_wall_collision(self, walls):
-        """Check if unit circle collides with any wall rectangles.
+    def check_wall_collision(self, wall_polygons, wall_bounds=None):
+        """Check if unit circle collides with any wall polygons.
         Returns True if collision detected and unit cannot pass walls.
         Returns False if unit has wall pass tags or no collision occurs.
         """
@@ -447,19 +447,25 @@ class Blue:
         if self.can_pass_wall():
             return False
         
-        for wall in walls:
-            # Find closest point on rectangle to circle center
-            closest_x = max(wall.left, min(self.x, wall.right))
-            closest_y = max(wall.top, min(self.y, wall.bottom))
+        for i, polygon in enumerate(wall_polygons):
+            # Fast bounding-box pre-filter
+            if wall_bounds and i < len(wall_bounds) and wall_bounds[i]:
+                min_x, max_x, min_y, max_y = wall_bounds[i]
+                if (self.x + self.radius < min_x or self.x - self.radius > max_x or
+                        self.y + self.radius < min_y or self.y - self.radius > max_y):
+                    continue
             
-            # Calculate distance between closest point and circle center
-            dx = self.x - closest_x
-            dy = self.y - closest_y
-            distance = math.sqrt(dx**2 + dy**2)
-            
-            # If distance is less than radius, there's a collision
-            if distance < self.radius:
+            # Check if circle center is inside the polygon
+            if point_in_polygon(self.x, self.y, polygon):
                 return True
+            
+            # Check distance from circle center to each polygon edge
+            n = len(polygon)
+            for j in range(n):
+                x1, y1 = polygon[j]
+                x2, y2 = polygon[(j + 1) % n]
+                if point_to_segment_distance(self.x, self.y, x1, y1, x2, y2) < self.radius:
+                    return True
         
         return False
     
@@ -470,12 +476,14 @@ class Blue:
         distance = math.sqrt(dx**2 + dy**2)
         return distance < (self.radius + other.radius)
     
-    def update_movement(self, collide_with=None, walls=None):
+    def update_movement(self, collide_with=None, walls=None, wall_polygons=None, wall_bounds=None):
         """Update unit position towards target
         
         Args:
             collide_with: Another unit to check collision with
-            walls: List of wall rectangles to check collision with
+            walls: (Deprecated) List of wall bounding-box rectangles
+            wall_polygons: List of polygon coordinate lists for accurate collision
+            wall_bounds: List of (min_x, max_x, min_y, max_y) tuples for fast culling
         """
         if not self.is_moving or self.target_x is None or self.target_y is None:
             return
@@ -515,7 +523,7 @@ class Blue:
                 collision_detected = True
             
             # Check wall collision (unless unit can pass walls)
-            if walls and self.check_wall_collision(walls):
+            if wall_polygons and self.check_wall_collision(wall_polygons, wall_bounds):
                 collision_detected = True
             
             # Revert if collision detected
