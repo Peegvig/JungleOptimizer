@@ -48,11 +48,11 @@ class JungleOptimizer():
         self.camera_following = False  # Only follow when SPACE is held
 
         # Zoom settings
-        self.zoom = 1.0  # 1.0 = 100% (no zoom)
-        self.min_zoom = 0.3  # 30% zoom out
-        self.max_zoom = 3.0  # 300% zoom in
-        self.zoom_speed = 0.1  # Amount to change zoom per scroll
-        self.prev_zoom = 1.0  # Track previous zoom to adjust camera when zooming
+        self.zoom = 0.63  # Default zoom (what was previously 63% is now the baseline)
+        self.min_zoom = 0.19  # ~30% of new baseline
+        self.max_zoom = 1.89  # ~300% of new baseline
+        self.zoom_speed = 0.063  # Scaled to match new baseline
+        self.prev_zoom = 0.63  # Track previous zoom to adjust camera when zooming
 
         # Camera panning
         self.camera_pan_speed = 20  # Pixels per frame when panning with SHIFT+WASD
@@ -237,6 +237,10 @@ class JungleOptimizer():
         else:
             pygame.draw.circle(self.screen, (0, 0, 255), (int(screen_x), int(screen_y)), int(blue_radius))
 
+        # Draw health bars above characters
+        self.draw_health_bar(self.player, world_to_screen, is_monster=False)
+        self.draw_health_bar(self.blue, world_to_screen, is_monster=True)
+
         # Display champion info
         champ_surface = self.font.render(f"Champion: {self.champion_name}", True, (255, 0, 0))
         self.screen.blit(champ_surface, (10, 10))
@@ -252,7 +256,7 @@ class JungleOptimizer():
         self.screen.blit(score_surface, (10, 130))
         
         # Display zoom level
-        zoom_percentage = int(self.zoom * 100)
+        zoom_percentage = int((self.zoom / 0.63) * 100)
         zoom_surface = self.font.render(f"Zoom: {zoom_percentage}%", True, (255, 255, 0))
         self.screen.blit(zoom_surface, (10, 170))
         
@@ -262,6 +266,76 @@ class JungleOptimizer():
         fps_rect = fps_surface.get_rect()
         fps_rect.topright = (self.window_width - 10, 10)
         self.screen.blit(fps_surface, fps_rect)
+
+    def draw_health_bar(self, unit, world_to_screen, is_monster=False):
+        """Draw a League of Legends style health bar above a unit.
+        
+        Args:
+            unit: The character/monster to draw the health bar for
+            world_to_screen: Coordinate conversion function
+            is_monster: If True, show HP number text (for jungle monsters)
+        """
+        if not hasattr(unit, 'hp') or not hasattr(unit, 'max_hp'):
+            return
+        
+        screen_x, screen_y = world_to_screen(unit.x, unit.y)
+        unit_radius = unit.radius * self.zoom
+        
+        # Health bar dimensions (scale with zoom) - 2x size
+        bar_width = max(int(unit.radius * 4.4 * self.zoom), 60)
+        bar_height = max(int(12 * self.zoom), 6)
+        border_thickness = max(int(3 * self.zoom), 2)
+        
+        # Position above the character sprite
+        bar_x = int(screen_x - bar_width / 2)
+        bar_y = int(screen_y - unit_radius - bar_height - max(int(12 * self.zoom), 8))
+        
+        hp_ratio = max(0, min(1, unit.hp / unit.max_hp))
+        fill_width = int(bar_width * hp_ratio)
+        
+        # Colors
+        bg_color = (30, 30, 30)
+        border_color = (10, 10, 10)
+        
+        # Fixed colors: monsters always red, players always green
+        if is_monster:
+            bar_color = (200, 30, 30)   # Red for monsters
+        else:
+            bar_color = (50, 205, 50)   # Green for players
+        
+        # For monsters: draw HP number ABOVE the health bar
+        if is_monster:
+            hp_font_size = max(int(32 * self.zoom), 20)
+            if not hasattr(self, '_hp_font_cache') or self._hp_font_cache_size != hp_font_size:
+                self._hp_font_cache = pygame.font.SysFont(None, hp_font_size)
+                self._hp_font_cache_size = hp_font_size
+            hp_text = self._hp_font_cache.render(f"{int(unit.hp)}/{int(unit.max_hp)}", True, (255, 255, 255))
+            text_rect = hp_text.get_rect(centerx=int(screen_x), bottom=bar_y - 1)
+            # Draw text shadow for readability
+            shadow = self._hp_font_cache.render(f"{int(unit.hp)}/{int(unit.max_hp)}", True, (0, 0, 0))
+            self.screen.blit(shadow, (text_rect.x + 1, text_rect.y + 1))
+            self.screen.blit(hp_text, text_rect)
+        
+        # Draw border
+        pygame.draw.rect(self.screen, border_color,
+                         (bar_x - border_thickness, bar_y - border_thickness,
+                          bar_width + border_thickness * 2, bar_height + border_thickness * 2))
+        # Draw background (depleted health)
+        pygame.draw.rect(self.screen, bg_color,
+                         (bar_x, bar_y, bar_width, bar_height))
+        # Draw filled health
+        if fill_width > 0:
+            pygame.draw.rect(self.screen, bar_color,
+                             (bar_x, bar_y, fill_width, bar_height))
+        
+        # Draw segment ticks (every 100 HP for players, every 1000 HP for monsters)
+        hp_per_tick = 1000 if is_monster else 100
+        num_ticks = int(unit.max_hp / hp_per_tick)
+        if num_ticks > 1 and num_ticks <= 50:
+            for i in range(1, num_ticks):
+                tick_x = bar_x + int(bar_width * (i * hp_per_tick / unit.max_hp))
+                pygame.draw.line(self.screen, (0, 0, 0),
+                                 (tick_x, bar_y), (tick_x, bar_y + bar_height), 1)
 
     def step(self):
 

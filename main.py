@@ -1,6 +1,6 @@
 from game import JungleOptimizer
 
-WINDOW_WIDTH, WINDOW_HEIGHT = 1200, 800
+WINDOW_WIDTH, WINDOW_HEIGHT = 1280, 720
 WORLD_WIDTH, WORLD_HEIGHT = 10240, 10240  # True world size (2048 * 5 scale factor)
 FPS = 60
 

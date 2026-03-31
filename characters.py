@@ -405,6 +405,10 @@ class Blue:
         self.x = 2627
         self.y = 4794
         
+        # Blue Sentinel stats
+        self.hp = 2300
+        self.max_hp = 2300
+        
         # Wall pass-through tag system
         self.can_pass_walls = False  # By default, units cannot pass walls
         self.wall_pass_tags = set()  # Set of tags that allow wall passing
