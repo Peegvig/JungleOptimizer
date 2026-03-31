@@ -3,6 +3,7 @@ import pygame
 import sys
 import random
 import json
+import math
 from characters import *
 from util import *
 
@@ -352,13 +353,20 @@ class JungleOptimizer():
                     mouse_x, mouse_y = event.pos
                     world_x = mouse_x / self.zoom + self.camera_x
                     world_y = mouse_y / self.zoom + self.camera_y
-                    self.player.set_target(world_x, world_y)
+                    
+                    # Check if clicking on Blue (within its gameplay radius)
+                    dx = world_x - self.blue.x
+                    dy = world_y - self.blue.y
+                    if math.sqrt(dx**2 + dy**2) <= self.blue.radius:
+                        self.player.set_attack_target(self.blue)
+                    else:
+                        self.player.set_target(world_x, world_y)
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 3:  # Right click released
                     self.right_mouse_pressed = False
             elif event.type == pygame.MOUSEMOTION:
-                # Update target while right-clicking and dragging
-                if self.right_mouse_pressed:
+                # Update target while right-clicking and dragging (only if not auto-attacking)
+                if self.right_mouse_pressed and self.player.attack_target is None:
                     mouse_x, mouse_y = event.pos
                     world_x = mouse_x / self.zoom + self.camera_x
                     world_y = mouse_y / self.zoom + self.camera_y
@@ -409,7 +417,9 @@ class JungleOptimizer():
             mouse_x, mouse_y = pygame.mouse.get_pos()
             world_x = mouse_x / self.zoom + self.camera_x
             world_y = mouse_y / self.zoom + self.camera_y
-            self.player.set_target(world_x, world_y)
+            # Only update move target if not auto-attacking
+            if self.player.attack_target is None:
+                self.player.set_target(world_x, world_y)
 
         # Handle continuous camera panning with SHIFT + Arrow Keys
         if self.shift_pressed:
@@ -425,6 +435,12 @@ class JungleOptimizer():
             
             # Disable camera following when panning manually
             self.camera_following = False
+
+        # Update auto-attack (before movement so attack can set movement target)
+        dt = 1.0 / self.fps
+        damage = self.player.update_auto_attack(dt)
+        if damage > 0:
+            self.blue.hp = max(0, self.blue.hp - damage)
 
         # Update champion movement and cooldowns
         self.player.update_movement(collide_with=self.blue, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)

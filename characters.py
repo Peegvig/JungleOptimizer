@@ -50,14 +50,67 @@ class Champion:
         self.W_COOLDOWN = 90  # ~1.5 seconds
         self.E_COOLDOWN = 120  # ~2 seconds
         
+        # Auto-attack system
+        self.attack_target = None  # The unit being auto-attacked
+        self.attack_range = 125  # Edge-to-edge attack range
+        self.attack_speed = 0.736  # Attacks per second
+        self.attack_timer = 0.0  # Seconds until next attack is ready
+        self.base_attack_damage_value = 57  # Damage per auto-attack
+        
         # Load champion image - override in subclasses
         self.images = None
 
     def set_target(self, target_x, target_y):
-        """Set movement target position"""
+        """Set movement target position and cancel auto-attack"""
         self.target_x = target_x
         self.target_y = target_y
         self.is_moving = True
+        self.attack_target = None
+
+    def set_attack_target(self, target_unit):
+        """Set a unit to auto-attack. Will move toward it if out of range."""
+        self.attack_target = target_unit
+        self.is_moving = False
+        self.target_x = None
+        self.target_y = None
+
+    def is_in_attack_range(self, target):
+        """Check if target is within attack range (edge-to-edge)."""
+        dx = self.x - target.x
+        dy = self.y - target.y
+        center_distance = math.sqrt(dx**2 + dy**2)
+        edge_distance = center_distance - self.radius - target.radius
+        return edge_distance <= self.attack_range
+
+    def update_auto_attack(self, dt):
+        """Update auto-attack logic. Returns damage dealt this frame (0 if none).
+        
+        Args:
+            dt: Delta time in seconds since last frame
+        """
+        if self.attack_target is None:
+            return 0
+        
+        # Move toward target if out of range
+        if not self.is_in_attack_range(self.attack_target):
+            self.target_x = self.attack_target.x
+            self.target_y = self.attack_target.y
+            self.is_moving = True
+            return 0
+        else:
+            # In range - stop moving and attack
+            self.is_moving = False
+            self.target_x = None
+            self.target_y = None
+        
+        # Tick down attack timer
+        if self.attack_timer > 0:
+            self.attack_timer -= dt
+            return 0
+        
+        # Attack!
+        self.attack_timer = 1.0 / self.attack_speed
+        return self.base_attack_damage_value
 
     def add_wall_pass_tag(self, tag):
         """Add a tag that allows this unit to pass through walls"""
@@ -243,6 +296,11 @@ class Amumu(Champion):
         self.Q_COOLDOWN = 60  # Bandage Toss
         self.W_COOLDOWN = 90  # Despair
         self.E_COOLDOWN = 120  # Tantrum
+        
+        # Amumu auto-attack stats
+        self.attack_range = 125  # Edge-to-edge
+        self.attack_speed = 0.736  # Attacks per second
+        self.base_attack_damage_value = 57  # Damage per auto-attack
         
         # Load Amumu image
         self.images = pygame.transform.scale(
