@@ -26,7 +26,8 @@ class Champion:
         self.score = 0
 
         # Circle-based positioning (x, y is now the CENTER of the circle)
-        self.radius = self.size // 2
+        self.radius = self.size // 2  # Gameplay radius (hitbox for abilities/visuals)
+        self.pathing_radius = 30  # Pathing radius (movement collision, smaller than gameplay)
         
         # Movement
         self.target_x = None
@@ -155,22 +156,25 @@ class Champion:
             if point_in_polygon(self.x, self.y, polygon):
                 return True
             
-            # Check distance from circle center to each polygon edge
+            # Check distance from circle center to each polygon edge (use pathing_radius for walls)
             n = len(polygon)
             for j in range(n):
                 x1, y1 = polygon[j]
                 x2, y2 = polygon[(j + 1) % n]
-                if point_to_segment_distance(self.x, self.y, x1, y1, x2, y2) < self.radius:
+                if point_to_segment_distance(self.x, self.y, x1, y1, x2, y2) < self.pathing_radius:
                     return True
         
         return False
 
     def check_collision(self, other):
-        """Check circle collision with another champion"""
+        """Check pathing collision with another unit.
+        Uses pathing_radius: a unit's center cannot enter another unit's pathing radius.
+        This allows units to partially overlap visually while still blocking movement.
+        """
         dx = self.x - other.x
         dy = self.y - other.y
         distance = math.sqrt(dx**2 + dy**2)
-        return distance < (self.radius + other.radius)
+        return distance < (self.pathing_radius + other.pathing_radius)
 
     def update_cooldowns(self):
         """Decrement all ability cooldowns"""
@@ -398,7 +402,8 @@ class Blue:
 
     def __init__(self,world_width, world_height, size=131, speed=2.75):
         self.size = size
-        self.radius = size // 2
+        self.radius = size // 2  # Gameplay radius (hitbox for abilities/visuals)
+        self.pathing_radius = 30  # Pathing radius (movement collision, smaller than gameplay)
         self.world_width = world_width
         self.world_height = world_height
         self.speed = speed
@@ -463,22 +468,25 @@ class Blue:
             if point_in_polygon(self.x, self.y, polygon):
                 return True
             
-            # Check distance from circle center to each polygon edge
+            # Check distance from circle center to each polygon edge (use pathing_radius for walls)
             n = len(polygon)
             for j in range(n):
                 x1, y1 = polygon[j]
                 x2, y2 = polygon[(j + 1) % n]
-                if point_to_segment_distance(self.x, self.y, x1, y1, x2, y2) < self.radius:
+                if point_to_segment_distance(self.x, self.y, x1, y1, x2, y2) < self.pathing_radius:
                     return True
         
         return False
     
     def check_collision(self, other):
-        """Check circle collision with another unit"""
+        """Check pathing collision with another unit.
+        Uses pathing_radius: a unit's center cannot enter another unit's pathing radius.
+        This allows units to partially overlap visually while still blocking movement.
+        """
         dx = self.x - other.x
         dy = self.y - other.y
         distance = math.sqrt(dx**2 + dy**2)
-        return distance < (self.radius + other.radius)
+        return distance < (self.pathing_radius + other.pathing_radius)
     
     def update_movement(self, collide_with=None, walls=None, wall_polygons=None, wall_bounds=None):
         """Update unit position towards target
