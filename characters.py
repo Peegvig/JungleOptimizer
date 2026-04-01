@@ -128,12 +128,10 @@ class Champion:
         if self.attack_timer > 0:
             self.attack_timer -= dt
         
-        # Process committed damage countdown (independent of attack state)
+        # Process committed phase countdown (damage already dealt at threshold)
         if self.attack_committed:
             self.attack_commit_timer -= dt
             if self.attack_commit_timer <= 0:
-                damage = self.pending_attack_damage
-                self.pending_attack_damage = 0
                 self.attack_committed = False
         
         # No target - just return any committed damage
@@ -173,12 +171,14 @@ class Champion:
         if self.attack_winding_up:
             self.attack_windup_elapsed += dt
             if self.attack_windup_elapsed >= windup_time:
-                # Windup complete - commit damage
+                # Windup complete - deal damage immediately at threshold
+                damage += self.base_attack_damage_value
                 self.attack_winding_up = False
                 self.attack_windup_elapsed = 0.0
+                # Enter committed state (no pending damage, just animation remainder)
                 self.attack_committed = True
                 self.attack_commit_timer = total_attack_time - windup_time
-                self.pending_attack_damage = self.base_attack_damage_value
+                self.pending_attack_damage = 0
                 # Set cooldown so next attack can't start until this attack period ends
                 self.attack_timer = total_attack_time - windup_time
             return damage
