@@ -57,22 +57,46 @@ class Champion:
         self.attack_timer = 0.0  # Seconds until next attack is ready
         self.base_attack_damage_value = 57  # Damage per auto-attack
         
+        # Attack canceling (windup/commit system)
+        self.ATTACK_WINDUP_PERCENT = 0.23384  # 23.384% of attack time
+        self.attack_winding_up = False  # True during windup phase
+        self.attack_windup_elapsed = 0.0  # Time elapsed in current windup
+        self.attack_committed = False  # True when damage is locked in
+        self.attack_commit_timer = 0.0  # Time remaining until committed damage lands
+        self.pending_attack_damage = 0  # Committed damage waiting to be dealt
+        
         # Load champion image - override in subclasses
         self.images = None
 
     def set_target(self, target_x, target_y):
-        """Set movement target position and cancel auto-attack"""
+        """Set movement target position. Cancels attack if in windup phase.
+        If attack is committed (past windup), damage still goes through."""
         self.target_x = target_x
         self.target_y = target_y
         self.is_moving = True
-        self.attack_target = None
+        
+        if self.attack_winding_up:
+            # Cancel attack during windup - no damage, can attack again
+            self.attack_winding_up = False
+            self.attack_windup_elapsed = 0.0
+            self.attack_target = None
+            self.attack_timer = 0.0
+        else:
+            # Clear attack target (committed damage still goes through)
+            self.attack_target = None
 
     def set_attack_target(self, target_unit):
         """Set a unit to auto-attack. Will move toward it if out of range."""
         self.attack_target = target_unit
-        self.is_moving = False
-        self.target_x = None
-        self.target_y = None
+        # Start moving toward target immediately if not in range
+        if not self.is_in_attack_range(target_unit):
+            self.target_x = target_unit.x
+            self.target_y = target_unit.y
+            self.is_moving = True
+        else:
+            self.is_moving = False
+            self.target_x = None
+            self.target_y = None
 
     def is_in_attack_range(self, target):
         """Check if target is within attack range (edge-to-edge)."""
@@ -83,34 +107,83 @@ class Champion:
         return edge_distance <= self.attack_range
 
     def update_auto_attack(self, dt):
-        """Update auto-attack logic. Returns damage dealt this frame (0 if none).
+        """Update auto-attack logic with windup/commit canceling.
+        
+        Attack phases:
+        1. Windup (0% to 23.384%): Can be canceled by movement. No damage.
+        2. Committed (23.384% to 100%): Damage locked in. Can move freely.
+           Damage is dealt when the full attack time elapses.
         
         Args:
             dt: Delta time in seconds since last frame
+            
+        Returns:
+            Damage dealt this frame (0 if none)
         """
+        total_attack_time = 1.0 / self.attack_speed
+        windup_time = total_attack_time * self.ATTACK_WINDUP_PERCENT
+        damage = 0
+        
+        # Always tick down attack cooldown timer (even while moving or without target)
+        if self.attack_timer > 0:
+            self.attack_timer -= dt
+        
+        # Process committed damage countdown (independent of attack state)
+        if self.attack_committed:
+            self.attack_commit_timer -= dt
+            if self.attack_commit_timer <= 0:
+                damage = self.pending_attack_damage
+                self.pending_attack_damage = 0
+                self.attack_committed = False
+        
+        # No target - just return any committed damage
         if self.attack_target is None:
-            return 0
+            return damage
         
         # Move toward target if out of range
         if not self.is_in_attack_range(self.attack_target):
+            if self.attack_winding_up:
+                # Cancel windup if target moved out of range
+                self.attack_winding_up = False
+                self.attack_windup_elapsed = 0.0
             self.target_x = self.attack_target.x
             self.target_y = self.attack_target.y
             self.is_moving = True
-            return 0
-        else:
-            # In range - stop moving and attack
+            return damage
+        
+        # In range - stop moving if not winding up or committed
+        if not self.attack_winding_up and not self.attack_committed:
             self.is_moving = False
             self.target_x = None
             self.target_y = None
         
-        # Tick down attack timer
+        # Wait for cooldown before starting new attack
         if self.attack_timer > 0:
-            self.attack_timer -= dt
-            return 0
+            return damage
         
-        # Attack!
-        self.attack_timer = 1.0 / self.attack_speed
-        return self.base_attack_damage_value
+        # Start new attack if not already winding up or committed
+        if not self.attack_winding_up and not self.attack_committed:
+            self.attack_winding_up = True
+            self.attack_windup_elapsed = 0.0
+            self.is_moving = False
+            self.target_x = None
+            self.target_y = None
+        
+        # Continue/process windup (including newly started attacks)
+        if self.attack_winding_up:
+            self.attack_windup_elapsed += dt
+            if self.attack_windup_elapsed >= windup_time:
+                # Windup complete - commit damage
+                self.attack_winding_up = False
+                self.attack_windup_elapsed = 0.0
+                self.attack_committed = True
+                self.attack_commit_timer = total_attack_time - windup_time
+                self.pending_attack_damage = self.base_attack_damage_value
+                # Set cooldown so next attack can't start until this attack period ends
+                self.attack_timer = total_attack_time - windup_time
+            return damage
+        
+        return damage
 
     def add_wall_pass_tag(self, tag):
         """Add a tag that allows this unit to pass through walls"""
@@ -139,6 +212,13 @@ class Champion:
             can_pass_walls: (Deprecated - use add_wall_pass_tag() instead)
         """
         if not self.is_moving or self.target_x is None or self.target_y is None:
+            return
+        
+        # If we have an attack target and are already in range, stop moving immediately
+        if self.attack_target and self.is_in_attack_range(self.attack_target):
+            self.is_moving = False
+            self.target_x = None
+            self.target_y = None
             return
         
         # Calculate distance to target
@@ -187,6 +267,13 @@ class Champion:
             if collision_detected:
                 self.x = old_x
                 self.y = old_y
+                return
+            
+            # After moving, check if we've entered attack range — stop early
+            if self.attack_target and self.is_in_attack_range(self.attack_target):
+                self.is_moving = False
+                self.target_x = None
+                self.target_y = None
 
     def check_wall_collision(self, wall_polygons, wall_bounds=None):
         """Check if champion circle collides with any wall polygons.

@@ -242,6 +242,9 @@ class JungleOptimizer():
         self.draw_health_bar(self.player, world_to_screen, is_monster=False)
         self.draw_health_bar(self.blue, world_to_screen, is_monster=True)
 
+        # Draw attack animation bar above player's health bar
+        self.draw_attack_bar(self.player, world_to_screen)
+
         # Display champion info
         champ_surface = self.font.render(f"Champion: {self.champion_name}", True, (255, 0, 0))
         self.screen.blit(champ_surface, (10, 10))
@@ -267,6 +270,71 @@ class JungleOptimizer():
         fps_rect = fps_surface.get_rect()
         fps_rect.topright = (self.window_width - 10, 10)
         self.screen.blit(fps_surface, fps_rect)
+
+    def draw_attack_bar(self, unit, world_to_screen):
+        """Draw an attack animation progress bar above the unit's health bar.
+        Shows windup phase, committed phase, and a tick mark at the windup threshold."""
+        total_attack_time = 1.0 / unit.attack_speed
+        windup_time = total_attack_time * unit.ATTACK_WINDUP_PERCENT
+
+        # Determine current progress ratio (0.0 to 1.0 over the full attack time)
+        if unit.attack_winding_up:
+            progress = unit.attack_windup_elapsed / total_attack_time
+        elif unit.attack_committed:
+            # Committed: windup is done, count forward from windup% to 100%
+            elapsed_commit = (total_attack_time - windup_time) - unit.attack_commit_timer
+            progress = (windup_time + elapsed_commit) / total_attack_time
+        else:
+            progress = 0.0
+
+        # Only draw when there's an active attack animation
+        if progress <= 0.0:
+            return
+
+        progress = min(progress, 1.0)
+
+        screen_x, screen_y = world_to_screen(unit.x, unit.y)
+        unit_radius = unit.radius * self.zoom
+
+        # Match health bar width; place above it
+        bar_width = max(int(unit.radius * 4.4 * self.zoom), 60)
+        bar_height = max(int(8 * self.zoom), 4)
+        border_thickness = max(int(2 * self.zoom), 1)
+        hp_bar_height = max(int(12 * self.zoom), 6)
+        hp_border = max(int(3 * self.zoom), 2)
+        gap = max(int(4 * self.zoom), 2)
+
+        bar_x = int(screen_x - bar_width / 2)
+        # Position above the health bar (health bar y minus gap minus this bar)
+        hp_bar_y = int(screen_y - unit_radius - hp_bar_height - max(int(12 * self.zoom), 8))
+        bar_y = hp_bar_y - hp_border - gap - bar_height - border_thickness * 2
+
+        fill_width = int(bar_width * progress)
+
+        # Color: orange during windup, green once committed
+        if unit.attack_winding_up:
+            fill_color = (255, 165, 0)  # Orange - can still cancel
+        else:
+            fill_color = (0, 200, 255)  # Cyan - committed, damage locked in
+
+        # Draw border
+        pygame.draw.rect(self.screen, (10, 10, 10),
+                         (bar_x - border_thickness, bar_y - border_thickness,
+                          bar_width + border_thickness * 2, bar_height + border_thickness * 2))
+        # Draw background
+        pygame.draw.rect(self.screen, (40, 40, 40),
+                         (bar_x, bar_y, bar_width, bar_height))
+        # Draw filled progress
+        if fill_width > 0:
+            pygame.draw.rect(self.screen, fill_color,
+                             (bar_x, bar_y, fill_width, bar_height))
+
+        # Draw tick mark at windup threshold (23.384%)
+        tick_x = bar_x + int(bar_width * unit.ATTACK_WINDUP_PERCENT)
+        tick_extend = max(int(3 * self.zoom), 2)
+        pygame.draw.line(self.screen, (255, 255, 255),
+                         (tick_x, bar_y - tick_extend),
+                         (tick_x, bar_y + bar_height + tick_extend), 2)
 
     def draw_health_bar(self, unit, world_to_screen, is_monster=False):
         """Draw a League of Legends style health bar above a unit.
@@ -417,8 +485,14 @@ class JungleOptimizer():
             mouse_x, mouse_y = pygame.mouse.get_pos()
             world_x = mouse_x / self.zoom + self.camera_x
             world_y = mouse_y / self.zoom + self.camera_y
-            # Only update move target if not auto-attacking
-            if self.player.attack_target is None:
+            # Check if cursor is over Blue — start attacking
+            dx = world_x - self.blue.x
+            dy = world_y - self.blue.y
+            if math.sqrt(dx**2 + dy**2) <= self.blue.radius:
+                if self.player.attack_target is not self.blue:
+                    self.player.set_attack_target(self.blue)
+            elif self.player.attack_target is None:
+                # Only update move target if not auto-attacking
                 self.player.set_target(world_x, world_y)
 
         # Handle continuous camera panning with SHIFT + Arrow Keys
@@ -436,15 +510,17 @@ class JungleOptimizer():
             # Disable camera following when panning manually
             self.camera_following = False
 
-        # Update auto-attack (before movement so attack can set movement target)
+        # Update champion movement first (so entering attack range is detected this frame)
+        self.player.update_movement(collide_with=self.blue, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
+        self.blue.update_movement(collide_with=self.player, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
+
+        # Update auto-attack (after movement so attack starts immediately on entering range)
         dt = 1.0 / self.fps
         damage = self.player.update_auto_attack(dt)
         if damage > 0:
             self.blue.hp = max(0, self.blue.hp - damage)
 
-        # Update champion movement and cooldowns
-        self.player.update_movement(collide_with=self.blue, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
-        self.blue.update_movement(collide_with=self.player, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
+        # Update cooldowns
         self.player.update_cooldowns()
 
         self.fill_background()
