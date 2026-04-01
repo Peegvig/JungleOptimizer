@@ -26,7 +26,7 @@ class Champion:
         self.score = 0
 
         # Circle-based positioning (x, y is now the CENTER of the circle)
-        self.radius = self.size // 2  # Gameplay radius (hitbox for abilities/visuals)
+        self.radius = 55  # Gameplay radius (hitbox for abilities/autos)
         self.pathing_radius = 30  # Pathing radius (movement collision, smaller than gameplay)
         
         # Movement
@@ -285,11 +285,11 @@ class Champion:
             return False
         
         for i, polygon in enumerate(wall_polygons):
-            # Fast bounding-box pre-filter
+            # Fast bounding-box pre-filter (use pathing_radius, not gameplay radius)
             if wall_bounds and i < len(wall_bounds) and wall_bounds[i]:
                 min_x, max_x, min_y, max_y = wall_bounds[i]
-                if (self.x + self.radius < min_x or self.x - self.radius > max_x or
-                        self.y + self.radius < min_y or self.y - self.radius > max_y):
+                if (self.x + self.pathing_radius < min_x or self.x - self.pathing_radius > max_x or
+                        self.y + self.pathing_radius < min_y or self.y - self.pathing_radius > max_y):
                     continue
             
             # Check if circle center is inside the polygon
@@ -701,11 +701,11 @@ class Blue:
             return False
         
         for i, polygon in enumerate(wall_polygons):
-            # Fast bounding-box pre-filter
+            # Fast bounding-box pre-filter (use pathing_radius, not gameplay radius)
             if wall_bounds and i < len(wall_bounds) and wall_bounds[i]:
                 min_x, max_x, min_y, max_y = wall_bounds[i]
-                if (self.x + self.radius < min_x or self.x - self.radius > max_x or
-                        self.y + self.radius < min_y or self.y - self.radius > max_y):
+                if (self.x + self.pathing_radius < min_x or self.x - self.pathing_radius > max_x or
+                        self.y + self.pathing_radius < min_y or self.y - self.pathing_radius > max_y):
                     continue
             
             # Check if circle center is inside the polygon
