@@ -244,6 +244,7 @@ class JungleOptimizer():
 
         # Draw attack animation bar above player's health bar
         self.draw_attack_bar(self.player, world_to_screen)
+        self.draw_blue_attack_bar(self.blue, world_to_screen)
 
         # Display champion info
         champ_surface = self.font.render(f"Champion: {self.champion_name}", True, (255, 0, 0))
@@ -336,6 +337,70 @@ class JungleOptimizer():
                          (tick_x, bar_y - tick_extend),
                          (tick_x, bar_y + bar_height + tick_extend), 2)
 
+    def draw_blue_attack_bar(self, unit, world_to_screen):
+        """Draw Blue's attack progress bar above its health bar.
+        Shows windup phase (orange) up to 32.1%, then cooldown phase (cyan) to 100%."""
+        # Show bar during windup OR during post-windup cooldown
+        if not unit.is_attacking and unit.attack_cooldown <= 0:
+            return
+
+        total_attack_time = 1.0 / unit.attack_speed
+        if unit.is_attacking and unit.attack_winding_up:
+            # Windup phase: progress goes from 0% to 32.1%
+            progress = unit.attack_windup_elapsed / total_attack_time
+        elif unit.attack_cooldown > 0 and unit.attack_cooldown_total > 0:
+            # Post-windup cooldown: progress continues from 32.1% to 100%
+            cooldown_progress = 1.0 - (unit.attack_cooldown / unit.attack_cooldown_total)
+            progress = unit.ATTACK_WINDUP_PERCENT + (1.0 - unit.ATTACK_WINDUP_PERCENT) * cooldown_progress
+        else:
+            return
+        progress = max(0.0, min(progress, 1.0))
+
+        screen_x, screen_y = world_to_screen(unit.x, unit.y)
+        unit_radius = unit.radius * self.zoom
+
+        bar_width = max(int(unit.radius * 4.4 * self.zoom), 60)
+        bar_height = max(int(8 * self.zoom), 4)
+        border_thickness = max(int(2 * self.zoom), 1)
+        hp_bar_height = max(int(12 * self.zoom), 6)
+        hp_border = max(int(3 * self.zoom), 2)
+        gap = max(int(4 * self.zoom), 2)
+
+        bar_x = int(screen_x - bar_width / 2)
+        hp_bar_y = int(screen_y - unit_radius - hp_bar_height - max(int(12 * self.zoom), 8))
+        bar_y = hp_bar_y - hp_border - gap - bar_height - border_thickness * 2
+
+        # Border
+        pygame.draw.rect(self.screen, (10, 10, 10),
+                         (bar_x - border_thickness, bar_y - border_thickness,
+                          bar_width + border_thickness * 2, bar_height + border_thickness * 2))
+        # Background
+        pygame.draw.rect(self.screen, (40, 40, 40),
+                         (bar_x, bar_y, bar_width, bar_height))
+
+        # Draw windup portion (orange, 0% to 32.1%)
+        windup_fill = min(progress, unit.ATTACK_WINDUP_PERCENT)
+        windup_px = int(bar_width * windup_fill)
+        if windup_px > 0:
+            pygame.draw.rect(self.screen, (255, 165, 0),
+                             (bar_x, bar_y, windup_px, bar_height))
+
+        # Draw cooldown portion (cyan, 32.1% to current progress)
+        if progress > unit.ATTACK_WINDUP_PERCENT:
+            cooldown_start_px = int(bar_width * unit.ATTACK_WINDUP_PERCENT)
+            cooldown_end_px = int(bar_width * progress)
+            cooldown_width = cooldown_end_px - cooldown_start_px
+            if cooldown_width > 0:
+                pygame.draw.rect(self.screen, (0, 200, 255),
+                                 (bar_x + cooldown_start_px, bar_y, cooldown_width, bar_height))
+
+        # Draw tick mark at windup threshold (32.1%)
+        tick_x = bar_x + int(bar_width * unit.ATTACK_WINDUP_PERCENT)
+        tick_extend = max(int(3 * self.zoom), 2)
+        pygame.draw.line(self.screen, (255, 255, 255),
+                         (tick_x, bar_y - tick_extend),
+                         (tick_x, bar_y + bar_height + tick_extend), 2)
+
     def draw_health_bar(self, unit, world_to_screen, is_monster=False):
         """Draw a League of Legends style health bar above a unit.
         
@@ -372,14 +437,19 @@ class JungleOptimizer():
         else:
             bar_color = (50, 205, 50)   # Green for players
         
-        # For monsters: draw HP number ABOVE the health bar
+        # For monsters: draw HP number ABOVE the attack bar (or health bar if no attack bar)
         if is_monster:
             hp_font_size = max(int(32 * self.zoom), 20)
             if not hasattr(self, '_hp_font_cache') or self._hp_font_cache_size != hp_font_size:
                 self._hp_font_cache = pygame.font.SysFont(None, hp_font_size)
                 self._hp_font_cache_size = hp_font_size
             hp_text = self._hp_font_cache.render(f"{int(unit.hp)}/{int(unit.max_hp)}", True, (255, 255, 255))
-            text_rect = hp_text.get_rect(centerx=int(screen_x), bottom=bar_y - 1)
+            # Offset text above the attack bar area so they don't overlap
+            atk_bar_height = max(int(8 * self.zoom), 4)
+            atk_border = max(int(2 * self.zoom), 1)
+            atk_gap = max(int(4 * self.zoom), 2)
+            text_bottom = bar_y - border_thickness - atk_gap - atk_bar_height - atk_border * 2 - 1
+            text_rect = hp_text.get_rect(centerx=int(screen_x), bottom=text_bottom)
             # Draw text shadow for readability
             shadow = self._hp_font_cache.render(f"{int(unit.hp)}/{int(unit.max_hp)}", True, (0, 0, 0))
             self.screen.blit(shadow, (text_rect.x + 1, text_rect.y + 1))
@@ -519,6 +589,13 @@ class JungleOptimizer():
         damage = self.player.update_auto_attack(dt)
         if damage > 0:
             self.blue.hp = max(0, self.blue.hp - damage)
+            # Trigger Blue aggro when the player deals damage
+            self.blue.trigger_aggro(self.player)
+
+        # Update Blue AI (chase and attack)
+        blue_damage = self.blue.update_ai(dt)
+        if blue_damage > 0:
+            self.player.hp = max(0, self.player.hp - blue_damage)
 
         # Update cooldowns
         self.player.update_cooldowns()

@@ -567,6 +567,21 @@ class Blue:
         self.target_x = None
         self.target_y = None
         self.is_moving = False
+        
+        # Aggro / chase / attack system
+        self.aggro = False
+        self.aggro_target = None  # Reference to the champion being chased
+        self.attack_range = 150  # Edge-to-edge attack range
+        self.attack_speed = 0.493  # Attacks per second
+        self.attack_damage = 66  # Damage per auto-attack
+        self.attack_timer = 0.0  # Time remaining in current attack animation
+        self.is_attacking = False  # True while in attack animation (cannot move)
+        self.attack_damage_dealt = False  # Whether damage has been dealt this attack
+        self.ATTACK_WINDUP_PERCENT = 0.321  # 32.1% of attack time is windup
+        self.attack_winding_up = False  # True during windup phase (locked in place)
+        self.attack_windup_elapsed = 0.0  # Time elapsed in current windup
+        self.attack_cooldown = 0.0  # Time remaining before Blue can start a new attack
+        self.attack_cooldown_total = 0.0  # Total cooldown duration for bar rendering
   
         self.images = pygame.transform.scale(pygame.image.load("images/blueC.png"), (self.size, self.size))
     
@@ -591,6 +606,90 @@ class Blue:
         self.target_x = target_x
         self.target_y = target_y
         self.is_moving = True
+    
+    def is_in_attack_range(self, target):
+        """Check if target is within attack range (edge-to-edge)."""
+        dx = self.x - target.x
+        dy = self.y - target.y
+        center_distance = math.sqrt(dx**2 + dy**2)
+        edge_distance = center_distance - self.radius - target.radius
+        return edge_distance <= self.attack_range
+
+    def trigger_aggro(self, target):
+        """Called when the champion attacks Blue. Blue starts chasing."""
+        if not self.aggro:
+            self.aggro = True
+            self.aggro_target = target
+
+    def update_ai(self, dt):
+        """Update Blue's chase and attack behavior.
+        
+        Attack phases:
+        1. Windup (0% to 32.1%): Locked in place, no damage yet.
+        2. Post-windup cooldown (32.1% to 100%): Damage dealt at threshold,
+           Blue can move/chase, but cannot start a new attack until the
+           full attack duration has elapsed.
+        
+        Returns:
+            Damage dealt to the aggro target this frame (0 if none).
+        """
+        if not self.aggro or self.aggro_target is None:
+            return 0
+        
+        total_attack_time = 1.0 / self.attack_speed
+        windup_time = total_attack_time * self.ATTACK_WINDUP_PERCENT
+        damage = 0
+        
+        # Tick down attack cooldown (post-windup remainder)
+        if self.attack_cooldown > 0:
+            self.attack_cooldown -= dt
+            if self.attack_cooldown < 0:
+                self.attack_cooldown = 0.0
+        
+        # If currently in windup phase — locked in place
+        if self.is_attacking and self.attack_winding_up:
+            self.attack_windup_elapsed += dt
+            if self.attack_windup_elapsed >= windup_time:
+                # Windup complete — deal damage NOW
+                damage = self.attack_damage
+                self.attack_damage_dealt = True
+                self.attack_winding_up = False
+                self.is_attacking = False
+                # Set cooldown for the remaining attack duration
+                remaining = total_attack_time - windup_time
+                self.attack_cooldown = remaining
+                self.attack_cooldown_total = remaining
+                self.attack_windup_elapsed = 0.0
+            return damage
+        
+        # Not in windup — can move, but respect attack cooldown
+        if self.is_in_attack_range(self.aggro_target):
+            if self.attack_cooldown <= 0:
+                # Cooldown done, start a new attack
+                self._start_attack()
+            else:
+                # In range but still on cooldown — stop and wait
+                self.is_moving = False
+                self.target_x = None
+                self.target_y = None
+        else:
+            # Chase the target
+            self.target_x = self.aggro_target.x
+            self.target_y = self.aggro_target.y
+            self.is_moving = True
+        
+        return damage
+    
+    def _start_attack(self):
+        """Begin a new attack animation (starts in windup phase)."""
+        self.is_attacking = True
+        self.attack_winding_up = True
+        self.attack_windup_elapsed = 0.0
+        self.attack_timer = 1.0 / self.attack_speed
+        self.attack_damage_dealt = False
+        self.is_moving = False
+        self.target_x = None
+        self.target_y = None
     
     def check_wall_collision(self, wall_polygons, wall_bounds=None):
         """Check if unit circle collides with any wall polygons.
