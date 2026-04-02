@@ -6,3 +6,4 @@ runs
 *.dat
 models
 runpod_models
+pathgrid_cache.json

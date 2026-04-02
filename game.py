@@ -69,6 +69,9 @@ class JungleOptimizer():
         # Load walls from JSON
         self.walls = self.load_walls_from_json("walls.json")
         
+        # Give Blue the wall data for A* pathfinding
+        self.blue.set_walls(self.wall_polygons, self.wall_bounds)
+        
         # Load backdrop image (optional - falls back to color if not found)
         try:
             self.backdrop = pygame.image.load("images/SRminimap4x.png")
@@ -215,6 +218,9 @@ class JungleOptimizer():
                 if len(screen_polygon) >= 3:
                     pygame.draw.polygon(self.screen, (0, 100, 0), screen_polygon, 3)
 
+        # Draw leash range circle (behind sprites)
+        self.draw_leash_circle(self.blue, world_to_screen)
+
         # Draw player and enemies (scaled by zoom)
         screen_x, screen_y = world_to_screen(self.player.x, self.player.y)
         player_radius = self.player.radius * self.zoom
@@ -245,6 +251,9 @@ class JungleOptimizer():
         # Draw attack animation bar above player's health bar
         self.draw_attack_bar(self.player, world_to_screen)
         self.draw_blue_attack_bar(self.blue, world_to_screen)
+
+        # Draw patience bar below Blue's health bar
+        self.draw_patience_bar(self.blue, world_to_screen)
 
         # Display champion info
         champ_surface = self.font.render(f"Champion: {self.champion_name}", True, (255, 0, 0))
@@ -475,6 +484,80 @@ class JungleOptimizer():
                 tick_x = bar_x + int(bar_width * (i * hp_per_tick / unit.max_hp))
                 pygame.draw.line(self.screen, (0, 0, 0),
                                  (tick_x, bar_y), (tick_x, bar_y + bar_height), 1)
+
+    def draw_leash_circle(self, unit, world_to_screen):
+        """Draw the leash range circle around the monster's spawn point."""
+        show_circle = False
+        if hasattr(unit, 'leash_circle_visible') and unit.leash_circle_visible:
+            show_circle = True
+        if hasattr(unit, 'reset_state') and unit.reset_state != unit.RESET_NONE:
+            show_circle = True
+        if hasattr(unit, 'patience_recovering') and unit.patience_recovering:
+            show_circle = True
+        if not show_circle:
+            return
+        
+        screen_x, screen_y = world_to_screen(unit.spawn_x, unit.spawn_y)
+        leash_screen_radius = int(unit.leash_range * self.zoom)
+        
+        # Color based on state
+        if hasattr(unit, 'reset_state') and unit.reset_state == unit.RESET_HARD:
+            circle_color = (200, 50, 50)  # Red during hard reset
+        elif hasattr(unit, 'patience') and unit.patience < 30:
+            circle_color = (220, 120, 40)  # Orange when patience low
+        else:
+            circle_color = (180, 180, 180)  # Light gray normally
+        
+        thickness = max(int(3 * self.zoom), 2)
+        pygame.draw.circle(self.screen, circle_color,
+                           (int(screen_x), int(screen_y)), leash_screen_radius, thickness)
+
+    def draw_patience_bar(self, unit, world_to_screen):
+        """Draw patience bar below the health bar (only when aggroed or resetting)."""
+        if not hasattr(unit, 'patience') or not hasattr(unit, 'patience_max'):
+            return
+        # Only show when relevant
+        show = (unit.aggro or unit.reset_state != unit.RESET_NONE or unit.patience_recovering)
+        if not show:
+            return
+        
+        screen_x, screen_y = world_to_screen(unit.x, unit.y)
+        unit_radius = unit.radius * self.zoom
+        
+        bar_width = max(int(unit.radius * 4.4 * self.zoom), 60)
+        bar_height = max(int(8 * self.zoom), 4)
+        border_thickness = max(int(2 * self.zoom), 1)
+        hp_bar_height = max(int(12 * self.zoom), 6)
+        hp_border = max(int(3 * self.zoom), 2)
+        gap = max(int(4 * self.zoom), 2)
+        
+        # Position below the health bar
+        hp_bar_y = int(screen_y - unit_radius - hp_bar_height - max(int(12 * self.zoom), 8))
+        bar_x = int(screen_x - bar_width / 2)
+        bar_y = hp_bar_y + hp_bar_height + hp_border + gap
+        
+        patience_ratio = max(0, min(1, unit.patience / unit.patience_max))
+        fill_width = int(bar_width * patience_ratio)
+        
+        # Color: teal when high, orange when medium, red when low
+        if patience_ratio > 0.5:
+            bar_color = (0, 200, 200)  # Teal
+        elif patience_ratio > 0.25:
+            bar_color = (255, 165, 0)  # Orange
+        else:
+            bar_color = (200, 30, 30)  # Red
+        
+        # Draw border
+        pygame.draw.rect(self.screen, (10, 10, 10),
+                         (bar_x - border_thickness, bar_y - border_thickness,
+                          bar_width + border_thickness * 2, bar_height + border_thickness * 2))
+        # Draw background
+        pygame.draw.rect(self.screen, (40, 40, 40),
+                         (bar_x, bar_y, bar_width, bar_height))
+        # Draw filled patience
+        if fill_width > 0:
+            pygame.draw.rect(self.screen, bar_color,
+                             (bar_x, bar_y, fill_width, bar_height))
 
     def step(self):
 

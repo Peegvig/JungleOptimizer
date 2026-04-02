@@ -545,7 +545,7 @@ Player = Amumu
 
 class Blue:
 
-    def __init__(self,world_width, world_height, size=131, speed=2.75):
+    def __init__(self,world_width, world_height, size=131, speed=2.70):
         self.size = size
         self.radius = size // 2  # Gameplay radius (hitbox for abilities/visuals)
         self.pathing_radius = 30  # Pathing radius (movement collision, smaller than gameplay)
@@ -559,9 +559,12 @@ class Blue:
         self.hp = 2300
         self.max_hp = 2300
         
-        # Wall pass-through tag system
-        self.can_pass_walls = False  # By default, units cannot pass walls
-        self.wall_pass_tags = set()  # Set of tags that allow wall passing
+        # Pathfinding
+        self._wall_polygons = None
+        self._wall_bounds = None
+        self._pathfinder = None  # Lazy-init PathGrid
+        self.path_waypoints = []  # List of (x, y) waypoints to follow
+        self._path_goal = None   # Current goal the path was computed for
         
         # Movement
         self.target_x = None
@@ -584,23 +587,81 @@ class Blue:
         self.attack_cooldown_total = 0.0  # Total cooldown duration for bar rendering
   
         self.images = pygame.transform.scale(pygame.image.load("images/blueC.png"), (self.size, self.size))
+        
+        # Remember spawn position
+        self.spawn_x = self.x
+        self.spawn_y = self.y
+        
+        # Patience system
+        self.patience = 100.0
+        self.patience_max = 100.0
+        self.leash_range = 650  # Distance from spawn before patience drains
+        
+        # Reset state machine
+        self.RESET_NONE = 0
+        self.RESET_SOFT = 1
+        self.RESET_HARD = 2
+        self.reset_state = self.RESET_NONE
+        self.soft_reset_timer = 0.0
+        self.SOFT_RESET_DURATION = 6.0  # Seconds before soft reset becomes hard reset
+        
+        # Speed variants (MS / 100: 270 MS normal, 330 MS resetting)
+        self.base_speed = speed  # Normal chase speed (270 MS)
+        self.soft_reset_speed = 3.30  # Walk back during soft reset (330 MS)
+        self.hard_reset_speed = 3.30  # Run back during hard reset (330 MS)
+        
+        # Healing rates during reset (fraction of max HP per second)
+        self.SOFT_HEAL_PERCENT = 0.06  # 6% max HP per second
+        self.HARD_HEAL_PERCENT = 0.25  # 25% max HP per second (rapid)
+        
+        # Patience immunity (after attack cancels soft reset)
+        self.patience_immunity_timer = 0.0
+        self.PATIENCE_IMMUNITY_DURATION = 1.5  # Seconds of patience loss immunity
+        
+        # Patience recovery at spawn (after hard reset)
+        self.at_spawn_timer = 0.0
+        self.patience_recovering = False
+        self.PATIENCE_RECOVERY_DELAY = 2.0  # Wait 2s before recovering patience
+        self.PATIENCE_RECOVERY_DURATION = 2.0  # Recover patience over 2s
+        
+        # Leash range circle visibility
+        self.leash_circle_visible = False
+        self.leash_circle_timer = 0.0
+        self.LEASH_CIRCLE_DURATION = 3.0  # Visible for 3s after last attack
     
-    def add_wall_pass_tag(self, tag):
-        """Add a tag that allows this unit to pass through walls"""
-        self.wall_pass_tags.add(tag)
-    
-    def remove_wall_pass_tag(self, tag):
-        """Remove a wall pass tag"""
-        self.wall_pass_tags.discard(tag)
-    
-    def has_wall_pass_tag(self, tag):
-        """Check if this unit has a specific wall pass tag"""
-        return tag in self.wall_pass_tags
-    
-    def can_pass_wall(self):
-        """Check if this unit can currently pass through walls"""
-        return len(self.wall_pass_tags) > 0
-    
+    def set_walls(self, wall_polygons, wall_bounds):
+        """Provide wall data so Blue can build a pathfinding grid."""
+        self._wall_polygons = wall_polygons
+        self._wall_bounds = wall_bounds
+        self._pathfinder = None  # Force rebuild
+
+    def _get_pathfinder(self):
+        """Lazy-init the A* grid (built once, reused)."""
+        if self._pathfinder is None and self._wall_polygons is not None:
+            from util import PathGrid
+            self._pathfinder = PathGrid(
+                self.world_width, self.world_height,
+                self._wall_polygons, self._wall_bounds,
+                self.pathing_radius, cell_size=100
+            )
+        return self._pathfinder
+
+    def _navigate_to(self, goal_x, goal_y):
+        """Compute (or reuse) an A* path to the goal and store waypoints."""
+        pf = self._get_pathfinder()
+        if pf is None:
+            # No pathfinder available — fall back to direct movement
+            self.path_waypoints = [(goal_x, goal_y)]
+            self._path_goal = (goal_x, goal_y)
+            return
+        # Recompute only if the goal moved significantly
+        if self._path_goal is not None:
+            dg = math.sqrt((goal_x - self._path_goal[0])**2 + (goal_y - self._path_goal[1])**2)
+            if dg < 30 and self.path_waypoints:
+                return  # Goal hasn't moved much, keep current path
+        self.path_waypoints = pf.find_path(self.x, self.y, goal_x, goal_y)
+        self._path_goal = (goal_x, goal_y)
+
     def set_target(self, target_x, target_y):
         """Set movement target position"""
         self.target_x = target_x
@@ -616,26 +677,73 @@ class Blue:
         return edge_distance <= self.attack_range
 
     def trigger_aggro(self, target):
-        """Called when the champion attacks Blue. Blue starts chasing."""
+        """Called when the champion attacks/damages Blue. Handles patience interactions."""
+        # Hard reset: completely ignore all aggression
+        if self.reset_state == self.RESET_HARD:
+            return
+        
+        # Soft reset: only respond if within leash range (cancel reset)
+        if self.reset_state == self.RESET_SOFT:
+            if self.distance_from_spawn() <= self.leash_range:
+                self.cancel_soft_reset(target)
+            return
+        
+        # Normal aggro
         if not self.aggro:
             self.aggro = True
             self.aggro_target = target
+            self.patience = self.patience_max
+        
+        # Refresh leash circle visibility
+        self.leash_circle_visible = True
+        self.leash_circle_timer = self.LEASH_CIRCLE_DURATION
 
     def update_ai(self, dt):
-        """Update Blue's chase and attack behavior.
-        
-        Attack phases:
-        1. Windup (0% to 32.1%): Locked in place, no damage yet.
-        2. Post-windup cooldown (32.1% to 100%): Damage dealt at threshold,
-           Blue can move/chase, but cannot start a new attack until the
-           full attack duration has elapsed.
+        """Update Blue's AI: patience, reset, chase, and attack behavior.
         
         Returns:
             Damage dealt to the aggro target this frame (0 if none).
         """
+        # Update leash circle timer
+        if self.leash_circle_visible:
+            self.leash_circle_timer -= dt
+            if self.leash_circle_timer <= 0:
+                self.leash_circle_visible = False
+        
+        # Handle reset states (soft or hard reset)
+        if self.reset_state != self.RESET_NONE:
+            return self._update_reset(dt)
+        
+        # Handle patience recovery at spawn
+        if self.patience_recovering:
+            self._update_patience_recovery(dt)
+            return 0
+        
         if not self.aggro or self.aggro_target is None:
             return 0
         
+        # Update patience immunity timer
+        if self.patience_immunity_timer > 0:
+            self.patience_immunity_timer -= dt
+        
+        # Deplete patience when outside leash range
+        # (but not if the aggro target is still within leash range)
+        dist = self.distance_from_spawn()
+        target_in_range = False
+        if self.aggro_target is not None:
+            tdx = self.aggro_target.x - self.spawn_x
+            tdy = self.aggro_target.y - self.spawn_y
+            target_in_range = math.sqrt(tdx**2 + tdy**2) <= self.leash_range
+        if dist > self.leash_range and self.patience_immunity_timer <= 0 and not target_in_range:
+            excess = dist - self.leash_range
+            depletion_rate = 8.0 + excess * 0.08
+            self.patience -= depletion_rate * dt
+            if self.patience <= 0:
+                self.patience = 0
+                self._start_soft_reset()
+                return 0
+        
+        # Normal attack logic
         total_attack_time = 1.0 / self.attack_speed
         windup_time = total_attack_time * self.ATTACK_WINDUP_PERCENT
         damage = 0
@@ -691,15 +799,105 @@ class Blue:
         self.target_x = None
         self.target_y = None
     
-    def check_wall_collision(self, wall_polygons, wall_bounds=None):
-        """Check if unit circle collides with any wall polygons.
-        Returns True if collision detected and unit cannot pass walls.
-        Returns False if unit has wall pass tags or no collision occurs.
-        """
-        # If unit can pass walls, don't check collision
-        if self.can_pass_wall():
-            return False
+    def distance_from_spawn(self):
+        """Get current distance from spawn point."""
+        dx = self.x - self.spawn_x
+        dy = self.y - self.spawn_y
+        return math.sqrt(dx**2 + dy**2)
+    
+    def _start_soft_reset(self):
+        """Enter soft reset state. Blue slowly walks back, heals, ignores attackers outside leash."""
+        self.reset_state = self.RESET_SOFT
+        self.soft_reset_timer = 0.0
+        self.speed = self.soft_reset_speed
+        # Cancel any ongoing attack
+        self.is_attacking = False
+        self.attack_winding_up = False
+        self.attack_windup_elapsed = 0.0
+        self.attack_cooldown = 0.0
+        # Walk to spawn
+        self.target_x = self.spawn_x
+        self.target_y = self.spawn_y
+        self.is_moving = True
+    
+    def _start_hard_reset(self):
+        """Transition from soft to hard reset. Ignores all attackers, runs back fast."""
+        self.reset_state = self.RESET_HARD
+        self.speed = self.hard_reset_speed
+        self.target_x = self.spawn_x
+        self.target_y = self.spawn_y
+        self.is_moving = True
+    
+    def cancel_soft_reset(self, target):
+        """Cancel soft reset when attacked within leash range. Restores some patience."""
+        self.reset_state = self.RESET_NONE
+        self.soft_reset_timer = 0.0
+        self.speed = self.base_speed
+        self.aggro = True
+        self.aggro_target = target
+        self.patience = min(self.patience_max, self.patience + 30.0)
+        self.patience_immunity_timer = self.PATIENCE_IMMUNITY_DURATION
+    
+    def _update_reset(self, dt):
+        """Update Blue during soft or hard reset. Returns 0 (no damage during reset)."""
+        # Heal based on reset type
+        if self.reset_state == self.RESET_SOFT:
+            self.hp = min(self.max_hp, self.hp + self.max_hp * self.SOFT_HEAL_PERCENT * dt)
+            self.soft_reset_timer += dt
+            # After 6 seconds, transition to hard reset
+            if self.soft_reset_timer >= self.SOFT_RESET_DURATION:
+                self._start_hard_reset()
+        elif self.reset_state == self.RESET_HARD:
+            self.hp = min(self.max_hp, self.hp + self.max_hp * self.HARD_HEAL_PERCENT * dt)
         
+        # Keep walking toward spawn
+        self.target_x = self.spawn_x
+        self.target_y = self.spawn_y
+        self.is_moving = True
+        
+        # Check if reached spawn
+        dist = self.distance_from_spawn()
+        if dist < self.speed:
+            self.x = self.spawn_x
+            self.y = self.spawn_y
+            self._arrive_at_spawn()
+        
+        return 0
+    
+    def _arrive_at_spawn(self):
+        """Called when Blue arrives back at spawn after resetting."""
+        self.reset_state = self.RESET_NONE
+        self.speed = self.base_speed
+        self.hp = self.max_hp  # Full heal
+        self.aggro = False
+        self.aggro_target = None
+        self.is_moving = False
+        self.target_x = None
+        self.target_y = None
+        self.is_attacking = False
+        self.attack_winding_up = False
+        self.attack_windup_elapsed = 0.0
+        self.attack_cooldown = 0.0
+        self.patience_recovering = True
+        self.at_spawn_timer = 0.0
+        self.leash_circle_visible = False
+    
+    def _update_patience_recovery(self, dt):
+        """Recover patience after arriving at spawn. 2s delay then 2s fill."""
+        self.at_spawn_timer += dt
+        if self.at_spawn_timer < self.PATIENCE_RECOVERY_DELAY:
+            return  # Still waiting
+        recovery_elapsed = self.at_spawn_timer - self.PATIENCE_RECOVERY_DELAY
+        self.patience = min(
+            self.patience_max,
+            (recovery_elapsed / self.PATIENCE_RECOVERY_DURATION) * self.patience_max
+        )
+        if self.patience >= self.patience_max:
+            self.patience = self.patience_max
+            self.patience_recovering = False
+    
+    def check_wall_collision(self, wall_polygons, wall_bounds=None):
+        """Check if unit circle collides with any wall polygons."""
         for i, polygon in enumerate(wall_polygons):
             # Fast bounding-box pre-filter (use pathing_radius, not gameplay radius)
             if wall_bounds and i < len(wall_bounds) and wall_bounds[i]:
@@ -732,60 +930,84 @@ class Blue:
         distance = math.sqrt(dx**2 + dy**2)
         return distance < (self.pathing_radius + other.pathing_radius)
     
+    def _is_position_blocked(self, x, y, collide_with, wall_polygons, wall_bounds):
+        """Test if a position is blocked by walls or another unit."""
+        old_x, old_y = self.x, self.y
+        self.x, self.y = x, y
+        blocked = False
+        if collide_with and self.check_collision(collide_with):
+            blocked = True
+        if not blocked and wall_polygons and self.check_wall_collision(wall_polygons, wall_bounds):
+            blocked = True
+        self.x, self.y = old_x, old_y
+        return blocked
+
     def update_movement(self, collide_with=None, walls=None, wall_polygons=None, wall_bounds=None):
-        """Update unit position towards target
-        
-        Args:
-            collide_with: Another unit to check collision with
-            walls: (Deprecated) List of wall bounding-box rectangles
-            wall_polygons: List of polygon coordinate lists for accurate collision
-            wall_bounds: List of (min_x, max_x, min_y, max_y) tuples for fast culling
-        """
+        """Follow A* waypoints toward the target. Recomputes path when chasing a moving target."""
         if not self.is_moving or self.target_x is None or self.target_y is None:
             return
-        
-        # Calculate distance to target
-        dx = self.target_x - self.x
-        dy = self.target_y - self.y
-        distance = math.sqrt(dx**2 + dy**2)
-        
-        # Check if reached target
-        if distance < self.speed:
-            self.x = self.target_x
-            self.y = self.target_y
-            self.is_moving = False
-            self.target_x = None
-            self.target_y = None
+
+        # Compute / update A* path toward current target
+        self._navigate_to(self.target_x, self.target_y)
+
+        if not self.path_waypoints:
             return
-        
-        # Normalize direction and move
-        if distance > 0:
-            move_x = (dx / distance) * self.speed
-            move_y = (dy / distance) * self.speed
-            
-            # Store old position in case we need to revert
-            old_x = self.x
-            old_y = self.y
-            
-            # Update position (x, y is center of circle)
-            self.x += move_x
-            self.y += move_y
-            
-            # Check collisions
-            collision_detected = False
-            
-            # Check unit collision
-            if collide_with and self.check_collision(collide_with):
-                collision_detected = True
-            
-            # Check wall collision (unless unit can pass walls)
-            if wall_polygons and self.check_wall_collision(wall_polygons, wall_bounds):
-                collision_detected = True
-            
-            # Revert if collision detected
-            if collision_detected:
-                self.x = old_x
-                self.y = old_y
+
+        # Step through waypoints
+        remaining_speed = self.speed
+        while remaining_speed > 0 and self.path_waypoints:
+            wp_x, wp_y = self.path_waypoints[0]
+            dx = wp_x - self.x
+            dy = wp_y - self.y
+            dist = math.sqrt(dx * dx + dy * dy)
+
+            if dist < remaining_speed:
+                # Reach this waypoint, advance to next
+                if not self._is_position_blocked(wp_x, wp_y, collide_with, wall_polygons, wall_bounds):
+                    self.x = wp_x
+                    self.y = wp_y
+                remaining_speed -= dist
+                self.path_waypoints.pop(0)
+            else:
+                # Move toward current waypoint
+                dir_x = dx / dist
+                dir_y = dy / dist
+                new_x = self.x + dir_x * remaining_speed
+                new_y = self.y + dir_y * remaining_speed
+                if not self._is_position_blocked(new_x, new_y, collide_with, wall_polygons, wall_bounds):
+                    self.x = new_x
+                    self.y = new_y
+                else:
+                    # Direct step blocked by fine-grained wall — try alternate angles
+                    base_angle = math.atan2(dir_y, dir_x)
+                    moved = False
+                    for offset_deg in range(15, 91, 15):
+                        for sign in (1, -1):
+                            angle = base_angle + math.radians(offset_deg * sign)
+                            tx = self.x + math.cos(angle) * remaining_speed
+                            ty = self.y + math.sin(angle) * remaining_speed
+                            if not self._is_position_blocked(tx, ty, collide_with, wall_polygons, wall_bounds):
+                                self.x = tx
+                                self.y = ty
+                                moved = True
+                                break
+                        if moved:
+                            break
+                remaining_speed = 0
+
+        # Check if we've reached the final target
+        if not self.path_waypoints:
+            dist_to_target = math.sqrt((self.target_x - self.x)**2 + (self.target_y - self.y)**2)
+            if dist_to_target < self.speed:
+                self.x = self.target_x
+                self.y = self.target_y
+                self.is_moving = False
+                self.target_x = None
+                self.target_y = None
+                self._path_goal = None
+            else:
+                # Path consumed but not at target — force recomputation next frame
+                self._path_goal = None
     
     def move():
         pass
