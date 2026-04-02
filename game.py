@@ -41,10 +41,6 @@ class JungleOptimizer():
         # Create enemy Blue
         self.blue = Blue(world_width, world_height)
 
-        # Camera position (centered on player at start)
-        self.camera_x = self.player.x - self.window_width // 2
-        self.camera_y = self.player.y - self.window_height // 2
-        
         # Camera follow settings
         self.camera_following = False  # Only follow when SPACE is held
 
@@ -55,6 +51,10 @@ class JungleOptimizer():
         self.max_zoom = 1.08  # 300% display
         self.zoom_speed = 0.036  # Zoom increment per scroll step
         self.prev_zoom = self.base_zoom  # Track previous zoom to adjust camera when zooming
+
+        # Camera position (centered on player at start)
+        self.camera_x = self.player.x - (self.window_width // 2) / self.zoom
+        self.camera_y = self.player.y - (self.window_height // 2) / self.zoom
 
         # Camera panning
         self.camera_pan_speed = 20  # Pixels per frame when panning with SHIFT+WASD

@@ -595,7 +595,7 @@ class Blue:
         # Patience system
         self.patience = 100.0
         self.patience_max = 100.0
-        self.leash_range = 1016  # Distance from spawn before patience drains
+        self.leash_range = 650  # Distance from spawn before patience drains
         
         # Reset state machine
         self.RESET_NONE = 0
