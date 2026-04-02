@@ -49,11 +49,12 @@ class JungleOptimizer():
         self.camera_following = False  # Only follow when SPACE is held
 
         # Zoom settings
-        self.zoom = 0.63  # Default zoom (what was previously 63% is now the baseline)
-        self.min_zoom = 0.19  # ~30% of new baseline
-        self.max_zoom = 1.89  # ~300% of new baseline
-        self.zoom_speed = 0.063  # Scaled to match new baseline
-        self.prev_zoom = 0.63  # Track previous zoom to adjust camera when zooming
+        self.base_zoom = 0.36  # Internal zoom factor that corresponds to 100% display
+        self.zoom = self.base_zoom  # Default zoom (100%)
+        self.min_zoom = 0.10  # ~28% display
+        self.max_zoom = 1.08  # 300% display
+        self.zoom_speed = 0.036  # Zoom increment per scroll step
+        self.prev_zoom = self.base_zoom  # Track previous zoom to adjust camera when zooming
 
         # Camera panning
         self.camera_pan_speed = 20  # Pixels per frame when panning with SHIFT+WASD
@@ -97,7 +98,7 @@ class JungleOptimizer():
         """Load wall polygons from JSON file"""
         walls = []
         collision_rects = []
-        wall_scale = 5  # Scale walls to match backdrop scale
+        wall_scale = 16000 / 2048  # Scale walls to match backdrop scale
         try:
             with open(filename, "r") as f:
                 walls_data = json.load(f)
@@ -270,7 +271,7 @@ class JungleOptimizer():
         self.screen.blit(score_surface, (10, 130))
         
         # Display zoom level
-        zoom_percentage = int((self.zoom / 0.63) * 100)
+        zoom_percentage = int((self.zoom / self.base_zoom) * 100)
         zoom_surface = self.font.render(f"Zoom: {zoom_percentage}%", True, (255, 255, 0))
         self.screen.blit(zoom_surface, (10, 170))
         

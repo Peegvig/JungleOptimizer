@@ -7,15 +7,15 @@ class Champion:
     """Base class for all playable champions"""
 
     def __init__(self, world_width, world_height):
-        self.size = 55
-        self.x = 2135
-        self.y = 4711
+        self.size = 86
+        self.x = 3336
+        self.y = 7361
         
         self.world_width = world_width
         self.world_height = world_height
         
         # Base stats - override in subclasses
-        self.speed = 5
+        self.speed = 7.81
         self.hp = 500
         self.max_hp = 500
         self.mana = 300
@@ -26,8 +26,8 @@ class Champion:
         self.score = 0
 
         # Circle-based positioning (x, y is now the CENTER of the circle)
-        self.radius = 55  # Gameplay radius (hitbox for abilities/autos)
-        self.pathing_radius = 30  # Pathing radius (movement collision, smaller than gameplay)
+        self.radius = 86  # Gameplay radius (hitbox for abilities/autos)
+        self.pathing_radius = 47  # Pathing radius (movement collision, smaller than gameplay)
         
         # Movement
         self.target_x = None
@@ -52,7 +52,7 @@ class Champion:
         
         # Auto-attack system
         self.attack_target = None  # The unit being auto-attacked
-        self.attack_range = 125  # Edge-to-edge attack range
+        self.attack_range = 195  # Edge-to-edge attack range
         self.attack_speed = 0.736  # Attacks per second
         self.attack_timer = 0.0  # Seconds until next attack is ready
         self.base_attack_damage_value = 57  # Damage per auto-attack
@@ -371,7 +371,7 @@ class Amumu(Champion):
         super().__init__(world_width, world_height)
         
         # Amumu stats
-        self.speed = 3.35
+        self.speed = 5.23
         self.hp = 510
         self.max_hp = 510
         self.mana = 300
@@ -385,7 +385,7 @@ class Amumu(Champion):
         self.E_COOLDOWN = 120  # Tantrum
         
         # Amumu auto-attack stats
-        self.attack_range = 125  # Edge-to-edge
+        self.attack_range = 195  # Edge-to-edge
         self.attack_speed = 0.736  # Attacks per second
         self.base_attack_damage_value = 57  # Damage per auto-attack
         
@@ -433,7 +433,7 @@ class LeeSin(Champion):
         super().__init__(world_width, world_height)
         
         # Lee Sin stats
-        self.speed = 6
+        self.speed = 9.38
         self.hp = 520
         self.max_hp = 520
         self.mana = 200
@@ -490,7 +490,7 @@ class Elise(Champion):
         super().__init__(world_width, world_height)
         
         # Elise stats
-        self.speed = 5
+        self.speed = 7.81
         self.hp = 510
         self.max_hp = 510
         self.mana = 340
@@ -545,15 +545,15 @@ Player = Amumu
 
 class Blue:
 
-    def __init__(self,world_width, world_height, size=131, speed=2.70):
+    def __init__(self,world_width, world_height, size=205, speed=4.22):
         self.size = size
         self.radius = size // 2  # Gameplay radius (hitbox for abilities/visuals)
-        self.pathing_radius = 30  # Pathing radius (movement collision, smaller than gameplay)
+        self.pathing_radius = 47  # Pathing radius (movement collision, smaller than gameplay)
         self.world_width = world_width
         self.world_height = world_height
         self.speed = speed
-        self.x = 2627
-        self.y = 4794
+        self.x = 4105
+        self.y = 7491
         
         # Blue Sentinel stats
         self.hp = 2300
@@ -574,7 +574,7 @@ class Blue:
         # Aggro / chase / attack system
         self.aggro = False
         self.aggro_target = None  # Reference to the champion being chased
-        self.attack_range = 150  # Edge-to-edge attack range
+        self.attack_range = 234  # Edge-to-edge attack range
         self.attack_speed = 0.493  # Attacks per second
         self.attack_damage = 66  # Damage per auto-attack
         self.attack_timer = 0.0  # Time remaining in current attack animation
@@ -595,7 +595,7 @@ class Blue:
         # Patience system
         self.patience = 100.0
         self.patience_max = 100.0
-        self.leash_range = 650  # Distance from spawn before patience drains
+        self.leash_range = 1016  # Distance from spawn before patience drains
         
         # Reset state machine
         self.RESET_NONE = 0
@@ -605,10 +605,10 @@ class Blue:
         self.soft_reset_timer = 0.0
         self.SOFT_RESET_DURATION = 6.0  # Seconds before soft reset becomes hard reset
         
-        # Speed variants (MS / 100: 270 MS normal, 330 MS resetting)
+        # Speed variants (scaled for 16000 world)
         self.base_speed = speed  # Normal chase speed (270 MS)
-        self.soft_reset_speed = 3.30  # Walk back during soft reset (330 MS)
-        self.hard_reset_speed = 3.30  # Run back during hard reset (330 MS)
+        self.soft_reset_speed = 5.16  # Walk back during soft reset (330 MS)
+        self.hard_reset_speed = 5.16  # Run back during hard reset (330 MS)
         
         # Healing rates during reset (fraction of max HP per second)
         self.SOFT_HEAL_PERCENT = 0.06  # 6% max HP per second
