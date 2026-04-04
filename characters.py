@@ -26,8 +26,8 @@ class Champion:
         self.score = 0
 
         # Circle-based positioning (x, y is now the CENTER of the circle)
-        self.radius = 86  # Gameplay radius (hitbox for abilities/autos)
-        self.pathing_radius = 47  # Pathing radius (movement collision, smaller than gameplay)
+        self.radius = 55  # Gameplay radius (hitbox for abilities/autos)
+        self.pathing_radius = 30  # Pathing radius (movement collision, smaller than gameplay)
         
         # Movement
         self.target_x = None
@@ -606,8 +606,8 @@ class Blue:
 
     def __init__(self,world_width, world_height, size=205, speed=4.22):
         self.size = size
-        self.radius = size // 2  # Gameplay radius (hitbox for abilities/visuals)
-        self.pathing_radius = 47  # Pathing radius (movement collision, smaller than gameplay)
+        self.radius = 131  # Gameplay radius (hitbox for abilities/visuals)
+        self.pathing_radius = 30  # Pathing radius (movement collision, smaller than gameplay)
         self.world_width = world_width
         self.world_height = world_height
         self.speed = speed
