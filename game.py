@@ -83,7 +83,7 @@ class JungleOptimizer():
         self.pathgrid = PathGrid(
             world_width, world_height,
             self.wall_polygons, self.wall_bounds,
-            47, cell_size=100  # pathing_radius shared by player and Blue
+            47, cell_size=50  # pathing_radius shared by player and Blue
         )
         print("Pathfinding grid ready.")
         self.player._pathfinder = self.pathgrid

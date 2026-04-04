@@ -34,6 +34,13 @@ class Champion:
         self.target_y = None
         self.is_moving = False
         
+        # Pathfinding (A*)
+        self._wall_polygons = None
+        self._wall_bounds = None
+        self._pathfinder = None
+        self.path_waypoints = []
+        self._path_goal = None
+        
         # Wall pass-through tag system
         self.can_pass_walls = False  # By default, units cannot pass walls
         self.wall_pass_tags = set()  # Set of tags that allow wall passing
