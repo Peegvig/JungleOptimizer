@@ -74,6 +74,7 @@ class Champion:
         self.target_x = target_x
         self.target_y = target_y
         self.is_moving = True
+        self._path_goal = None  # Force path recomputation for new target
         
         if self.attack_winding_up:
             # Cancel attack during windup - no damage, can attack again
@@ -201,16 +202,53 @@ class Champion:
         """Check if this unit can currently pass through walls"""
         return len(self.wall_pass_tags) > 0
 
+    def set_walls(self, wall_polygons, wall_bounds):
+        """Provide wall data so champion can build a pathfinding grid."""
+        self._wall_polygons = wall_polygons
+        self._wall_bounds = wall_bounds
+        self._pathfinder = None  # Force rebuild
+
+    def _get_pathfinder(self):
+        """Lazy-init the A* grid (built once, reused)."""
+        if self._pathfinder is None and self._wall_polygons is not None:
+            from util import PathGrid
+            self._pathfinder = PathGrid(
+                self.world_width, self.world_height,
+                self._wall_polygons, self._wall_bounds,
+                self.pathing_radius, cell_size=100
+            )
+        return self._pathfinder
+
+    def _navigate_to(self, goal_x, goal_y):
+        """Compute (or reuse) an A* path to the goal and store waypoints."""
+        pf = self._get_pathfinder()
+        if pf is None:
+            # No pathfinder available — fall back to direct movement
+            self.path_waypoints = [(goal_x, goal_y)]
+            self._path_goal = (goal_x, goal_y)
+            return
+        # Recompute only if the goal moved significantly
+        if self._path_goal is not None:
+            dg = math.sqrt((goal_x - self._path_goal[0])**2 + (goal_y - self._path_goal[1])**2)
+            if dg < 30 and self.path_waypoints:
+                return  # Goal hasn't moved much, keep current path
+        self.path_waypoints = pf.find_path(self.x, self.y, goal_x, goal_y)
+        self._path_goal = (goal_x, goal_y)
+
+    def _is_position_blocked(self, x, y, collide_with, wall_polygons, wall_bounds):
+        """Test if a position is blocked by walls or another unit."""
+        old_x, old_y = self.x, self.y
+        self.x, self.y = x, y
+        blocked = False
+        if collide_with and self.check_collision(collide_with):
+            blocked = True
+        if not blocked and wall_polygons and self.check_wall_collision(wall_polygons, wall_bounds):
+            blocked = True
+        self.x, self.y = old_x, old_y
+        return blocked
+
     def update_movement(self, collide_with=None, walls=None, wall_polygons=None, wall_bounds=None, can_pass_walls=False):
-        """Update champion position towards target
-        
-        Args:
-            collide_with: Another champion to check collision with
-            walls: (Deprecated) List of wall bounding-box rectangles
-            wall_polygons: List of polygon coordinate lists for accurate collision
-            wall_bounds: List of (min_x, max_x, min_y, max_y) tuples for fast culling
-            can_pass_walls: (Deprecated - use add_wall_pass_tag() instead)
-        """
+        """Follow A* waypoints toward the target, like Blue's pathfinding."""
         if not self.is_moving or self.target_x is None or self.target_y is None:
             return
         
@@ -220,60 +258,74 @@ class Champion:
             self.target_x = None
             self.target_y = None
             return
-        
-        # Calculate distance to target
-        dx = self.target_x - self.x
-        dy = self.target_y - self.y
-        distance = math.sqrt(dx**2 + dy**2)
-        
-        # Check if reached target
-        if distance < self.speed:
-            self.x = self.target_x
-            self.y = self.target_y
-            self.is_moving = False
-            self.target_x = None
-            self.target_y = None
+
+        # Compute / update A* path toward current target
+        self._navigate_to(self.target_x, self.target_y)
+
+        if not self.path_waypoints:
             return
-        
-        # Normalize direction and move
-        if distance > 0:
-            move_x = (dx / distance) * self.speed
-            move_y = (dy / distance) * self.speed
-            
-            # Store old position in case we need to revert
-            old_x = self.x
-            old_y = self.y
-            
-            # Update position (x, y is center of circle)
-            self.x += move_x
-            self.y += move_y
-            
-            # Check collisions
-            collision_detected = False
-            collision_reason = ""
-            
-            # Check character collision
-            if collide_with and self.check_collision(collide_with):
-                collision_detected = True
-                collision_reason = "character collision"
-            
-            # Check wall collision (unless unit can pass walls)
-            if wall_polygons:
-                if self.check_wall_collision(wall_polygons, wall_bounds):
-                    collision_detected = True
-                    collision_reason = "wall collision"
-            
-            # Revert if collision detected
-            if collision_detected:
-                self.x = old_x
-                self.y = old_y
-                return
-            
-            # After moving, check if we've entered attack range — stop early
-            if self.attack_target and self.is_in_attack_range(self.attack_target):
+
+        # Step through waypoints
+        remaining_speed = self.speed
+        while remaining_speed > 0 and self.path_waypoints:
+            wp_x, wp_y = self.path_waypoints[0]
+            dx = wp_x - self.x
+            dy = wp_y - self.y
+            dist = math.sqrt(dx * dx + dy * dy)
+
+            if dist < remaining_speed:
+                # Reach this waypoint, advance to next
+                if not self._is_position_blocked(wp_x, wp_y, collide_with, wall_polygons, wall_bounds):
+                    self.x = wp_x
+                    self.y = wp_y
+                remaining_speed -= dist
+                self.path_waypoints.pop(0)
+            else:
+                # Move toward current waypoint
+                dir_x = dx / dist
+                dir_y = dy / dist
+                new_x = self.x + dir_x * remaining_speed
+                new_y = self.y + dir_y * remaining_speed
+                if not self._is_position_blocked(new_x, new_y, collide_with, wall_polygons, wall_bounds):
+                    self.x = new_x
+                    self.y = new_y
+                else:
+                    # Direct step blocked — try alternate angles
+                    base_angle = math.atan2(dir_y, dir_x)
+                    moved = False
+                    for offset_deg in range(15, 91, 15):
+                        for sign in (1, -1):
+                            angle = base_angle + math.radians(offset_deg * sign)
+                            tx = self.x + math.cos(angle) * remaining_speed
+                            ty = self.y + math.sin(angle) * remaining_speed
+                            if not self._is_position_blocked(tx, ty, collide_with, wall_polygons, wall_bounds):
+                                self.x = tx
+                                self.y = ty
+                                moved = True
+                                break
+                        if moved:
+                            break
+                remaining_speed = 0
+
+        # Check if we've reached the final target
+        if not self.path_waypoints:
+            dist_to_target = math.sqrt((self.target_x - self.x)**2 + (self.target_y - self.y)**2)
+            if dist_to_target < self.speed:
+                self.x = self.target_x
+                self.y = self.target_y
                 self.is_moving = False
                 self.target_x = None
                 self.target_y = None
+                self._path_goal = None
+            else:
+                # Path consumed but not at target — force recomputation next frame
+                self._path_goal = None
+
+        # After moving, check if we've entered attack range — stop early
+        if self.attack_target and self.is_in_attack_range(self.attack_target):
+            self.is_moving = False
+            self.target_x = None
+            self.target_y = None
 
     def check_wall_collision(self, wall_polygons, wall_bounds=None):
         """Check if champion circle collides with any wall polygons.

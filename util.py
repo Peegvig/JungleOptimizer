@@ -149,6 +149,17 @@ class PathGrid:
                     queue.append((nc, nr))
         return c, r
 
+    def snap_to_walkable(self, world_x, world_y):
+        """If (world_x, world_y) is inside a wall, return the nearest walkable world position.
+        Otherwise return the original position unchanged."""
+        cs = self.cell_size
+        c = max(0, min(int(world_x / cs), self.cols - 1))
+        r = max(0, min(int(world_y / cs), self.rows - 1))
+        if self.walkable[r][c]:
+            return world_x, world_y
+        nc, nr = self._nearest_walkable(c, r)
+        return nc * cs + cs // 2, nr * cs + cs // 2
+
     def find_path(self, start_x, start_y, goal_x, goal_y):
         """A* from world (start_x, start_y) to (goal_x, goal_y).
 

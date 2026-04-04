@@ -62,6 +62,8 @@ class JungleOptimizer():
 
         # Right-click dragging
         self.right_mouse_pressed = False
+        self.right_hold_timer = 0.0  # Throttle right-click-held updates
+        self.RIGHT_HOLD_INTERVAL = 0.25  # Update 4 times per second
 
         self.background_color = (181, 101, 29)
         self.wall_color = (1, 50, 32)
@@ -72,6 +74,23 @@ class JungleOptimizer():
         
         # Give Blue the wall data for A* pathfinding
         self.blue.set_walls(self.wall_polygons, self.wall_bounds)
+        
+        # Give player the wall data for A* pathfinding
+        self.player.set_walls(self.wall_polygons, self.wall_bounds)
+        
+        # Eagerly build the shared PathGrid so first click doesn't lag
+        print("Building pathfinding grid (first time may take a moment)...")
+        self.pathgrid = PathGrid(
+            world_width, world_height,
+            self.wall_polygons, self.wall_bounds,
+            47, cell_size=100  # pathing_radius shared by player and Blue
+        )
+        print("Pathfinding grid ready.")
+        self.player._pathfinder = self.pathgrid
+        self.blue._pathfinder = self.pathgrid
+        
+        # Click marker (green circle like League)
+        self.click_marker = None  # (x, y) world coords or None
         
         # Load backdrop image (optional - falls back to color if not found)
         try:
@@ -221,6 +240,15 @@ class JungleOptimizer():
 
         # Draw leash range circle (behind sprites)
         self.draw_leash_circle(self.blue, world_to_screen)
+
+        # Draw click marker (green circle at right-click destination)
+        if self.click_marker is not None:
+            mx, my = world_to_screen(self.click_marker[0], self.click_marker[1])
+            marker_radius = max(int(12 * self.zoom), 4)
+            marker_surface = pygame.Surface((marker_radius * 2 + 2, marker_radius * 2 + 2), pygame.SRCALPHA)
+            pygame.draw.circle(marker_surface, (0, 255, 0, 200), (marker_radius + 1, marker_radius + 1), marker_radius, 2)
+            pygame.draw.circle(marker_surface, (0, 255, 0, 100), (marker_radius + 1, marker_radius + 1), max(marker_radius // 3, 2))
+            self.screen.blit(marker_surface, (int(mx) - marker_radius - 1, int(my) - marker_radius - 1))
 
         # Draw player and enemies (scaled by zoom)
         screen_x, screen_y = world_to_screen(self.player.x, self.player.y)
@@ -582,17 +610,16 @@ class JungleOptimizer():
                     if math.sqrt(dx**2 + dy**2) <= self.blue.radius:
                         self.player.set_attack_target(self.blue)
                     else:
+                        # Snap to nearest walkable position if clicking in a wall
+                        world_x, world_y = self.pathgrid.snap_to_walkable(world_x, world_y)
                         self.player.set_target(world_x, world_y)
+                        self.click_marker = (world_x, world_y)
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 3:  # Right click released
                     self.right_mouse_pressed = False
             elif event.type == pygame.MOUSEMOTION:
-                # Update target while right-clicking and dragging (only if not auto-attacking)
-                if self.right_mouse_pressed and self.player.attack_target is None:
-                    mouse_x, mouse_y = event.pos
-                    world_x = mouse_x / self.zoom + self.camera_x
-                    world_y = mouse_y / self.zoom + self.camera_y
-                    self.player.set_target(world_x, world_y)
+                # Motion events are ignored for right-click hold; throttled update below handles it
+                pass
             elif event.type == pygame.MOUSEWHEEL:
                 # Mouse wheel zoom - zoom around the mouse cursor position
                 mouse_x, mouse_y = pygame.mouse.get_pos()
@@ -634,20 +661,28 @@ class JungleOptimizer():
                 elif event.key == pygame.K_e:
                     self.player.cast_e()
 
-        # Update target continuously while right-click is held (for camera-locked dragging)
+        # Update target while right-click is held, throttled to 4 times per second
         if self.right_mouse_pressed:
-            mouse_x, mouse_y = pygame.mouse.get_pos()
-            world_x = mouse_x / self.zoom + self.camera_x
-            world_y = mouse_y / self.zoom + self.camera_y
-            # Check if cursor is over Blue — start attacking
-            dx = world_x - self.blue.x
-            dy = world_y - self.blue.y
-            if math.sqrt(dx**2 + dy**2) <= self.blue.radius:
-                if self.player.attack_target is not self.blue:
-                    self.player.set_attack_target(self.blue)
-            elif self.player.attack_target is None:
-                # Only update move target if not auto-attacking
-                self.player.set_target(world_x, world_y)
+            self.right_hold_timer += 1.0 / self.fps
+            if self.right_hold_timer >= self.RIGHT_HOLD_INTERVAL:
+                self.right_hold_timer = 0.0
+                mouse_x, mouse_y = pygame.mouse.get_pos()
+                world_x = mouse_x / self.zoom + self.camera_x
+                world_y = mouse_y / self.zoom + self.camera_y
+                # Check if cursor is over Blue — start attacking
+                dx = world_x - self.blue.x
+                dy = world_y - self.blue.y
+                if math.sqrt(dx**2 + dy**2) <= self.blue.radius:
+                    if self.player.attack_target is not self.blue:
+                        self.player.set_attack_target(self.blue)
+                elif self.player.attack_target is None:
+                    # Snap to nearest walkable position if clicking in a wall
+                    world_x, world_y = self.pathgrid.snap_to_walkable(world_x, world_y)
+                    # Only update move target if not auto-attacking
+                    self.player.set_target(world_x, world_y)
+                    self.click_marker = (world_x, world_y)
+        else:
+            self.right_hold_timer = 0.0
 
         # Handle continuous camera panning with SHIFT + Arrow Keys
         if self.shift_pressed:
@@ -670,6 +705,14 @@ class JungleOptimizer():
 
         # Update auto-attack (after movement so attack starts immediately on entering range)
         dt = 1.0 / self.fps
+
+        # Clear click marker when player reaches destination or stops moving
+        if self.click_marker is not None:
+            dx = self.player.x - self.click_marker[0]
+            dy = self.player.y - self.click_marker[1]
+            if math.sqrt(dx*dx + dy*dy) < self.player.speed or not self.player.is_moving:
+                self.click_marker = None
+
         damage = self.player.update_auto_attack(dt)
         if damage > 0:
             self.blue.hp = max(0, self.blue.hp - damage)
