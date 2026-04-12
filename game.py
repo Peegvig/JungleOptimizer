@@ -290,10 +290,10 @@ class JungleOptimizer():
         self.screen.blit(champ_surface, (10, 10))
         
         # Display health and mana
-        hp_surface = self.font.render(f"HP: {self.player.hp}/{self.player.max_hp}", True, (0, 255, 0))
+        hp_surface = self.font.render(f"HP: {self.player.hp:.1f}/{self.player.max_hp:.1f}", True, (0, 255, 0))
         self.screen.blit(hp_surface, (10, 50))
         
-        mana_surface = self.font.render(f"Mana: {self.player.mana}/{self.player.max_mana}", True, (0, 0, 255))
+        mana_surface = self.font.render(f"Mana: {self.player.mana:.1f}/{self.player.max_mana:.1f}", True, (0, 0, 255))
         self.screen.blit(mana_surface, (10, 90))
         
         score_surface = self.font.render(f"Score: {self.score}", True, (255, 0, 0))
@@ -719,25 +719,39 @@ class JungleOptimizer():
         dmg_mod = pet.damage_dealt_modifier if pet else 1.0
         rcv_mod = pet.damage_received_modifier if pet else 1.0
 
+        # --- Player auto-attack → Blue (physical damage) ---
         damage = self.player.update_auto_attack(dt)
         if damage > 0:
-            modified = damage * dmg_mod
+            after_pet = damage * dmg_mod
+            # Physical damage mitigated by Blue's armor
+            blue_armor = getattr(self.blue, 'armor', 0)
+            mit_factor = 100 / (100 + blue_armor) if blue_armor > 0 else 1.0
+            modified = after_pet * mit_factor
             old_hp = self.blue.hp
             self.blue.hp = max(0, self.blue.hp - modified)
             if pet:
-                print(f"[{self.game_time:7.2f}s] AMUMU HIT: base={damage:.2f} x{dmg_mod:.2f} = {modified:.2f} → Blue (HP: {old_hp:.1f} → {self.blue.hp:.1f})")
+                armor_str = f" x{mit_factor:.3f}(armor={blue_armor:.1f})" if blue_armor > 0 else ""
+                print(f"[{self.game_time:7.2f}s] AMUMU HIT: AD={damage:.2f} x{dmg_mod:.2f}{armor_str} = {modified:.2f} phys → Blue (HP: {old_hp:.1f} → {self.blue.hp:.1f})")
             self.blue.trigger_aggro(self.player)
 
-        # Update Blue AI (chase and attack)
+        # --- Blue auto-attack → Player (physical damage + 5% current HP bonus) ---
         blue_damage = self.blue.update_ai(dt)
         if blue_damage > 0:
-            modified = blue_damage * rcv_mod
+            # 5% target current HP bonus physical damage
+            bonus_hp_pct = getattr(self.blue, 'bonus_phys_current_hp_percent', 0)
+            bonus_hp_dmg = self.player.hp * bonus_hp_pct
+            total_base = blue_damage + bonus_hp_dmg
+            after_pet = total_base * rcv_mod
+            # Physical damage mitigated by Amumu's armor
+            player_armor = self.player.armor
+            mit_factor = 100 / (100 + player_armor)
+            modified = after_pet * mit_factor
             old_hp = self.player.hp
-            self.player.hp = max(0, self.player.hp - modified)
+            self.player.hp = round(max(0, self.player.hp - modified), 1)
             if pet:
-                print(f"[{self.game_time:7.2f}s] BLUE HIT:  base={blue_damage:.2f} x{rcv_mod:.2f} = {modified:.2f} → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})")
+                print(f"[{self.game_time:7.2f}s] BLUE HIT:  AD={blue_damage:.2f} +{bonus_hp_pct*100:.0f}%curHP({bonus_hp_dmg:.2f}) ={total_base:.2f} x{rcv_mod:.2f} x{mit_factor:.3f}(armor={player_armor:.1f}) = {modified:.2f} phys → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})")
 
-        # Update jungle pet
+        # --- Jungle pet update (true damage, no mitigation) ---
         if pet:
             monsters_attacking = []
             if self.blue.aggro and self.blue.aggro_target is self.player:
@@ -754,9 +768,17 @@ class JungleOptimizer():
                       f"(HP: {old_hp:.1f} → {monster.hp:.1f})")
             if pet_heal > 0:
                 old_hp = self.player.hp
-                self.player.hp = min(self.player.max_hp, self.player.hp + pet_heal)
+                self.player.hp = round(min(self.player.max_hp, self.player.hp + pet_heal), 1)
                 heal_ps = pet.get_heal_per_second(self.player.level)
                 print(f"[{self.game_time:7.2f}s] PET HEAL:  +{pet_heal:.2f} ({heal_ps:.2f}/s) → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})")
+
+        # --- HP and mana regeneration ---
+        if hasattr(self.player, 'hp5') and self.player.hp < self.player.max_hp:
+            hp_regen = self.player.hp5 / 5.0 * dt
+            self.player.hp = round(min(self.player.max_hp, self.player.hp + hp_regen), 1)
+        if hasattr(self.player, 'mp5') and self.player.mana < self.player.max_mana:
+            mp_regen = self.player.mp5 / 5.0 * dt
+            self.player.mana = round(min(self.player.max_mana, self.player.mana + mp_regen), 1)
 
         # Update cooldowns
         self.player.update_cooldowns()

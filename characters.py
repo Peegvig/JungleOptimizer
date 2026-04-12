@@ -444,45 +444,77 @@ class Champion:
 class Amumu(Champion):
     """The Sad Mummy - Tank jungler"""
 
+    @staticmethod
+    def level_growth(growth, level):
+        """Standard League of Legends per-level stat growth formula."""
+        return growth * (level - 1) * (0.7025 + 0.0175 * (level - 1))
+
     def __init__(self, world_width, world_height):
         super().__init__(world_width, world_height)
-        
-        # Amumu stats
-        self.speed = 5.23
-        self.hp = 510
-        self.max_hp = 510
-        self.mana = 300
-        self.max_mana = 300
-        self.attack_damage = 55
-        self.armor = 25
-        
+
         # Amumu ability cooldowns
         self.Q_COOLDOWN = 60  # Bandage Toss
         self.W_COOLDOWN = 90  # Despair
         self.E_COOLDOWN = 120  # Tantrum
-        
-        # Amumu auto-attack stats
+
+        # Amumu auto-attack stats (fixed)
         self.attack_range = 195  # Edge-to-edge
-        self.attack_speed = 0.736  # Attacks per second
-        self.base_attack_damage_value = 57  # Damage per auto-attack
-        
+
+        # Base stat values at level 1 (used for bonus-stat calculations)
+        self.base_ad = 57
+        self.base_armor_value = 33
+        self.base_mr = 32
+        self.base_max_hp = 685
+        self.ap = 18  # Ability power (flat)
+
+        # Jungle pet (created before set_level so pet bonus HP is included)
+        self.pet = JunglePet(self)
+
+        # Set level 1 stats
+        self.set_level(1)
+
         # Load Amumu image
         self.images = pygame.transform.scale(
-            pygame.image.load("images/amumuC.png"), 
+            pygame.image.load("images/amumuC.png"),
             (self.size, self.size)
         )
 
-        # Level and bonus stat tracking for pet calculations
-        self.level = 1
-        self.ap = 0
-        self.magic_resistance = 32  # Amumu base MR at level 1
-        self.base_ad = self.base_attack_damage_value  # 57
-        self.base_armor_value = self.armor  # 25
-        self.base_mr = self.magic_resistance  # 32
-        self.base_max_hp = self.max_hp  # 510
+    def set_level(self, level):
+        """Recalculate all stats for the given level."""
+        self.level = level
+        g = Amumu.level_growth
 
-        # Jungle pet
-        self.pet = JunglePet(self)
+        # Health: base 685 + growth + pet bonus HP (10 at lvl1 → 180 at lvl18)
+        champion_hp = 685 + g(94, level)
+        pet_hp = (10 + (180 - 10) / 17 * (level - 1)) if self.pet else 0
+        self.max_hp = round(champion_hp + pet_hp, 1)
+        self.hp = self.max_hp
+
+        # HP regen per 5 seconds
+        self.hp5 = 9 + g(0.85, level)
+
+        # Armor
+        self.armor = 33 + g(4, level)
+
+        # Magic resistance
+        self.magic_resistance = 32 + g(2.05, level)
+
+        # Move speed (335 League MS → game units per frame: MS / 64)
+        self.speed = 335 / 64
+
+        # Mana
+        self.max_mana = round(285 + g(40, level), 1)
+        self.mana = self.max_mana
+
+        # Mana regen per 5 seconds
+        self.mp5 = 7.4 + g(0.55, level)
+
+        # Attack damage
+        self.base_attack_damage_value = 57 + g(3.8, level)
+        self.attack_damage = self.base_attack_damage_value
+
+        # Attack speed
+        self.attack_speed = 0.736 * (1 + 0.0218 * level * 0.638)
 
     def cast_q(self):
         """Bandage Toss - Q ability"""
@@ -761,6 +793,9 @@ class Blue:
         # Blue Sentinel stats
         self.hp = 2300
         self.max_hp = 2300
+        self.armor = 42
+        self.magic_resistance = 42
+        self.bonus_phys_current_hp_percent = 0.05  # 5% target current HP bonus physical damage
         
         # Pathfinding
         self._wall_polygons = None
