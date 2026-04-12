@@ -25,6 +25,9 @@ class Champion:
         
         self.score = 0
 
+        # Jungle pet (set by subclass if applicable)
+        self.pet = None
+
         # Circle-based positioning (x, y is now the CENTER of the circle)
         self.radius = 55  # Gameplay radius (hitbox for abilities/autos)
         self.pathing_radius = 30  # Pathing radius (movement collision, smaller than gameplay)
@@ -422,6 +425,21 @@ class Champion:
         else:
             print(f"E on cooldown")
 
+    def get_bonus_ad(self):
+        return max(0, self.base_attack_damage_value - getattr(self, 'base_ad', self.base_attack_damage_value))
+
+    def get_ap(self):
+        return getattr(self, 'ap', 0)
+
+    def get_bonus_armor(self):
+        return max(0, self.armor - getattr(self, 'base_armor_value', self.armor))
+
+    def get_bonus_mr(self):
+        return max(0, getattr(self, 'magic_resistance', 0) - getattr(self, 'base_mr', 0))
+
+    def get_bonus_health(self):
+        return max(0, self.max_hp - getattr(self, 'base_max_hp', self.max_hp))
+
 
 class Amumu(Champion):
     """The Sad Mummy - Tank jungler"""
@@ -453,6 +471,18 @@ class Amumu(Champion):
             pygame.image.load("images/amumuC.png"), 
             (self.size, self.size)
         )
+
+        # Level and bonus stat tracking for pet calculations
+        self.level = 1
+        self.ap = 0
+        self.magic_resistance = 32  # Amumu base MR at level 1
+        self.base_ad = self.base_attack_damage_value  # 57
+        self.base_armor_value = self.armor  # 25
+        self.base_mr = self.magic_resistance  # 32
+        self.base_max_hp = self.max_hp  # 510
+
+        # Jungle pet
+        self.pet = JunglePet(self)
 
     def cast_q(self):
         """Bandage Toss - Q ability"""
@@ -602,6 +632,116 @@ class Elise(Champion):
 # Alias for backwards compatibility
 Player = Amumu
 
+
+class JunglePet:
+    """Jungle companion pet that buffs damage dealt/received and attacks monsters."""
+
+    def __init__(self, owner):
+        self.owner = owner
+        self.attack_radius = 650
+        self.tick_interval = 0.5  # Half-second intervals
+        self.tick_timer = 0.0
+        self.active = False
+        self.extra_ticks_remaining = 0  # Ticks remaining after owner stops attacking
+
+        # Damage modifiers for jungle monsters
+        self.damage_dealt_modifier = 1.10   # 110% damage to monsters
+        self.damage_received_modifier = 0.50  # 50% damage from monsters
+
+    def get_pet_damage_per_second(self, level, is_epic=False):
+        """Calculate pet damage per second based on owner level and stats."""
+        base = 20 + (70 / 17) * (level - 1)
+        bonus_ad = self.owner.get_bonus_ad()
+        ap = self.owner.get_ap()
+        bonus_armor = self.owner.get_bonus_armor()
+        bonus_mr = self.owner.get_bonus_mr()
+        bonus_health = self.owner.get_bonus_health()
+        scaling = (0.10 * bonus_ad + 0.12 * ap +
+                   0.20 * bonus_armor + 0.20 * bonus_mr +
+                   0.03 * bonus_health)
+        if is_epic:
+            base = min(base, 15.5)
+        return base + scaling
+
+    def get_damage_breakdown(self, level, is_epic=False):
+        """Return detailed breakdown of pet damage components."""
+        base = 20 + (70 / 17) * (level - 1)
+        bonus_ad = self.owner.get_bonus_ad()
+        ap = self.owner.get_ap()
+        bonus_armor = self.owner.get_bonus_armor()
+        bonus_mr = self.owner.get_bonus_mr()
+        bonus_health = self.owner.get_bonus_health()
+        ad_c = 0.10 * bonus_ad
+        ap_c = 0.12 * ap
+        armor_c = 0.20 * bonus_armor
+        mr_c = 0.20 * bonus_mr
+        hp_c = 0.03 * bonus_health
+        if is_epic:
+            base = min(base, 15.5)
+        return {
+            'total': base + ad_c + ap_c + armor_c + mr_c + hp_c,
+            'base': base, 'ad': ad_c, 'ap': ap_c,
+            'armor': armor_c, 'mr': mr_c, 'hp': hp_c,
+        }
+
+    def get_heal_per_second(self, level):
+        """Calculate heal per second based on owner level."""
+        return 14 + 2 * (level - 1)
+
+    def update(self, dt, monsters_attacking_owner):
+        """Tick the pet. Returns (damage_dict {monster: dmg}, heal_amount, tick_fired)."""
+        damage_dict = {}
+        heal = 0.0
+        tick_fired = False
+
+        owner_attacking = self.owner.attack_target is not None
+
+        if owner_attacking:
+            self.active = True
+            self.extra_ticks_remaining = 4  # 2 full attacks = 4 half-second ticks
+
+        if not self.active:
+            return damage_dict, heal, tick_fired
+
+        # Gather valid targets within attack radius
+        targets = []
+        for m in monsters_attacking_owner:
+            dx = m.x - self.owner.x
+            dy = m.y - self.owner.y
+            if math.sqrt(dx**2 + dy**2) <= self.attack_radius:
+                targets.append(m)
+
+        if not targets and not owner_attacking:
+            self.active = False
+            self.tick_timer = 0.0
+            return damage_dict, heal, tick_fired
+
+        self.tick_timer += dt
+        while self.tick_timer >= self.tick_interval and self.active:
+            self.tick_timer -= self.tick_interval
+            tick_fired = True
+            level = self.owner.level
+
+            for m in targets:
+                is_epic = getattr(m, 'is_epic', False)
+                per_sec = self.get_pet_damage_per_second(level, is_epic)
+                tick_dmg = per_sec / 2  # Half-second tick = half per-second damage
+                if m not in damage_dict:
+                    damage_dict[m] = 0
+                damage_dict[m] += tick_dmg
+
+            heal_per_sec = self.get_heal_per_second(level)
+            heal += heal_per_sec / 2
+
+            if not owner_attacking:
+                self.extra_ticks_remaining -= 1
+                if self.extra_ticks_remaining <= 0:
+                    self.active = False
+                    break
+
+        return damage_dict, heal, tick_fired
+
+
 class Blue:
 
     def __init__(self,world_width, world_height, size=205, speed=4.22):
@@ -613,6 +753,10 @@ class Blue:
         self.speed = speed
         self.x = 4105
         self.y = 7491
+
+        # Monster type flags
+        self.is_jungle_monster = True
+        self.is_epic = False  # Not an epic monster (Dragon/Baron/Herald)
         
         # Blue Sentinel stats
         self.hp = 2300

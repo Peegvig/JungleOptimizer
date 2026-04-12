@@ -112,6 +112,7 @@ class JungleOptimizer():
         self.announcement_font = pygame.font.SysFont(None, 100)
         
         self.score = 0
+        self.game_time = 0.0  # Elapsed game time in seconds
 
     def load_walls_from_json(self, filename):
         """Load wall polygons from JSON file"""
@@ -705,6 +706,7 @@ class JungleOptimizer():
 
         # Update auto-attack (after movement so attack starts immediately on entering range)
         dt = 1.0 / self.fps
+        self.game_time += dt
 
         # Clear click marker when player reaches destination or stops moving
         if self.click_marker is not None:
@@ -713,16 +715,48 @@ class JungleOptimizer():
             if math.sqrt(dx*dx + dy*dy) < self.player.speed or not self.player.is_moving:
                 self.click_marker = None
 
+        pet = self.player.pet  # May be None for non-Amumu champions
+        dmg_mod = pet.damage_dealt_modifier if pet else 1.0
+        rcv_mod = pet.damage_received_modifier if pet else 1.0
+
         damage = self.player.update_auto_attack(dt)
         if damage > 0:
-            self.blue.hp = max(0, self.blue.hp - damage)
-            # Trigger Blue aggro when the player deals damage
+            modified = damage * dmg_mod
+            old_hp = self.blue.hp
+            self.blue.hp = max(0, self.blue.hp - modified)
+            if pet:
+                print(f"[{self.game_time:7.2f}s] AMUMU HIT: base={damage:.2f} x{dmg_mod:.2f} = {modified:.2f} → Blue (HP: {old_hp:.1f} → {self.blue.hp:.1f})")
             self.blue.trigger_aggro(self.player)
 
         # Update Blue AI (chase and attack)
         blue_damage = self.blue.update_ai(dt)
         if blue_damage > 0:
-            self.player.hp = max(0, self.player.hp - blue_damage)
+            modified = blue_damage * rcv_mod
+            old_hp = self.player.hp
+            self.player.hp = max(0, self.player.hp - modified)
+            if pet:
+                print(f"[{self.game_time:7.2f}s] BLUE HIT:  base={blue_damage:.2f} x{rcv_mod:.2f} = {modified:.2f} → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})")
+
+        # Update jungle pet
+        if pet:
+            monsters_attacking = []
+            if self.blue.aggro and self.blue.aggro_target is self.player:
+                monsters_attacking.append(self.blue)
+            pet_dmg, pet_heal, tick_fired = pet.update(dt, monsters_attacking)
+            for monster, dmg in pet_dmg.items():
+                old_hp = monster.hp
+                monster.hp = max(0, monster.hp - dmg)
+                name = "Blue" if monster is self.blue else "Monster"
+                bd = pet.get_damage_breakdown(self.player.level, getattr(monster, 'is_epic', False))
+                print(f"[{self.game_time:7.2f}s] PET DMG:   {dmg:.2f} true → {name} "
+                      f"(per-sec={bd['total']:.2f}: base={bd['base']:.2f} +{bd['ad']:.2f}bAD +{bd['ap']:.2f}AP "
+                      f"+{bd['armor']:.2f}bAr +{bd['mr']:.2f}bMR +{bd['hp']:.2f}bHP) "
+                      f"(HP: {old_hp:.1f} → {monster.hp:.1f})")
+            if pet_heal > 0:
+                old_hp = self.player.hp
+                self.player.hp = min(self.player.max_hp, self.player.hp + pet_heal)
+                heal_ps = pet.get_heal_per_second(self.player.level)
+                print(f"[{self.game_time:7.2f}s] PET HEAL:  +{pet_heal:.2f} ({heal_ps:.2f}/s) → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})")
 
         # Update cooldowns
         self.player.update_cooldowns()
