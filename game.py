@@ -731,7 +731,10 @@ class JungleOptimizer():
             self.blue.hp = max(0, self.blue.hp - modified)
             if pet:
                 armor_str = f" x{mit_factor:.3f}(armor={blue_armor:.1f})" if blue_armor > 0 else ""
-                print(f"[{self.game_time:7.2f}s] AMUMU HIT: AD={damage:.2f} x{dmg_mod:.2f}{armor_str} = {modified:.2f} phys → Blue (HP: {old_hp:.1f} → {self.blue.hp:.1f})")
+                log_entry = f"[{self.game_time:7.2f}s] AMUMU HIT: AD={damage:.2f} x{dmg_mod:.2f}{armor_str} = {modified:.2f} phys → Blue (HP: {old_hp:.1f} → {self.blue.hp:.1f})"
+                print(log_entry)
+                with open("damage_log.txt", "a", encoding='utf-8') as f:
+                    f.write(log_entry + "\n")
             self.blue.trigger_aggro(self.player)
 
         # --- Blue auto-attack → Player (physical damage + 5% current HP bonus) ---
@@ -749,7 +752,10 @@ class JungleOptimizer():
             old_hp = self.player.hp
             self.player.hp = round(max(0, self.player.hp - modified), 1)
             if pet:
-                print(f"[{self.game_time:7.2f}s] BLUE HIT:  AD={blue_damage:.2f} +{bonus_hp_pct*100:.0f}%curHP({bonus_hp_dmg:.2f}) ={total_base:.2f} x{rcv_mod:.2f} x{mit_factor:.3f}(armor={player_armor:.1f}) = {modified:.2f} phys → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})")
+                log_entry = f"[{self.game_time:7.2f}s] BLUE HIT:  AD={blue_damage:.2f} +{bonus_hp_pct*100:.0f}%curHP({bonus_hp_dmg:.2f}) ={total_base:.2f} x{rcv_mod:.2f} x{mit_factor:.3f}(armor={player_armor:.1f}) = {modified:.2f} phys → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})"
+                print(log_entry)
+                with open("damage_log.txt", "a", encoding='utf-8') as f:
+                    f.write(log_entry + "\n")
 
         # --- Jungle pet update (true damage, no mitigation) ---
         if pet:
@@ -762,10 +768,13 @@ class JungleOptimizer():
                 monster.hp = max(0, monster.hp - dmg)
                 name = "Blue" if monster is self.blue else "Monster"
                 bd = pet.get_damage_breakdown(self.player.level, getattr(monster, 'is_epic', False))
-                print(f"[{self.game_time:7.2f}s] PET DMG:   {dmg:.2f} true → {name} "
-                      f"(per-sec={bd['total']:.2f}: base={bd['base']:.2f} +{bd['ad']:.2f}bAD +{bd['ap']:.2f}AP "
-                      f"+{bd['armor']:.2f}bAr +{bd['mr']:.2f}bMR +{bd['hp']:.2f}bHP) "
-                      f"(HP: {old_hp:.1f} → {monster.hp:.1f})")
+                log_entry = f"[{self.game_time:7.2f}s] PET DMG:   {dmg:.2f} true → {name} " \
+                      f"(per-sec={bd['total']:.2f}: base={bd['base']:.2f} +{bd['ad']:.2f}bAD +{bd['ap']:.2f}AP " \
+                      f"+{bd['armor']:.2f}bAr +{bd['mr']:.2f}bMR +{bd['hp']:.2f}bHP) " \
+                      f"(HP: {old_hp:.1f} → {monster.hp:.1f})"
+                print(log_entry)
+                with open("damage_log.txt", "a", encoding='utf-8') as f:
+                    f.write(log_entry + "\n")
             if pet_heal > 0:
                 old_hp = self.player.hp
                 self.player.hp = round(min(self.player.max_hp, self.player.hp + pet_heal), 1)
