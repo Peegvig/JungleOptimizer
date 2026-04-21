@@ -477,7 +477,7 @@ class Amumu(Champion):
         self.attack_range = 195  # Edge-to-edge
 
         # Base stat values at level 1 (used for bonus-stat calculations)
-        self.base_ad = 570 #57, TESTING!
+        self.base_ad = 57
         self.base_armor_value = 33
         self.base_mr = 32
         self.base_max_hp = 685
