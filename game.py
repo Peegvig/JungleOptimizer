@@ -5,7 +5,7 @@ import random
 import json
 import math
 from characters import *
-from util import *
+from utility_scripts.util import *
 
 class JungleOptimizer():
     

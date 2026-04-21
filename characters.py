@@ -1,7 +1,7 @@
 import random
 import pygame
 import math
-from util import *
+from utility_scripts.util import *
 
 class Champion:
     """Base class for all playable champions"""
@@ -221,7 +221,7 @@ class Champion:
     def _get_pathfinder(self):
         """Lazy-init the A* grid (built once, reused)."""
         if self._pathfinder is None and self._wall_polygons is not None:
-            from util import PathGrid
+            from utility_scripts.util import PathGrid
             self._pathfinder = PathGrid(
                 self.world_width, self.world_height,
                 self._wall_polygons, self._wall_bounds,
@@ -671,7 +671,7 @@ class JunglePet:
     def __init__(self, owner):
         self.owner = owner
         self.attack_radius = 650
-        self.tick_interval = 0.8  # Pet ticks every 0.8 seconds
+        self.tick_interval = 1.0  # Pet ticks every 1.0 seconds
         self.tick_timer = 0.0
         self.active = False
         self.extra_ticks_remaining = 0  # Ticks remaining after owner stops being attacked
@@ -906,7 +906,7 @@ class Blue:
     def _get_pathfinder(self):
         """Lazy-init the A* grid (built once, reused)."""
         if self._pathfinder is None and self._wall_polygons is not None:
-            from util import PathGrid
+            from utility_scripts.util import PathGrid
             self._pathfinder = PathGrid(
                 self.world_width, self.world_height,
                 self._wall_polygons, self._wall_bounds,
