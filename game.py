@@ -25,6 +25,10 @@ class JungleOptimizer():
         self.clock = pygame.time.Clock()
         self.fps = fps
 
+        # Clear damage log for new run
+        with open("damage_log.txt", "w", encoding='utf-8') as f:
+            f.write("")
+
         # Create player champion based on selection
         self.champion_name = champion
         if champion.lower() == "amumu":
@@ -113,6 +117,8 @@ class JungleOptimizer():
         
         self.score = 0
         self.game_time = 0.0  # Elapsed game time in seconds
+        self.first_log_time = None  # Track first log entry for time offset
+        self.logging_offset = 0.0  # Offset to make first log appear at 0.6s
 
     def load_walls_from_json(self, filename):
         """Load wall polygons from JSON file"""
@@ -708,6 +714,15 @@ class JungleOptimizer():
         dt = 1.0 / self.fps
         self.game_time += dt
 
+        # Initialize variables for logging check
+        damage = 0
+        blue_damage = 0
+        pet_dmg = {}
+        pet_heal = 0
+        pet_mana = 0
+        log_entries = []  # Collect log entries to apply offset later
+        log_entries = []  # Collect log entries to apply offset later
+
         # Clear click marker when player reaches destination or stops moving
         if self.click_marker is not None:
             dx = self.player.x - self.click_marker[0]
@@ -732,9 +747,7 @@ class JungleOptimizer():
             if pet:
                 armor_str = f" x{mit_factor:.3f}(armor={blue_armor:.1f})" if blue_armor > 0 else ""
                 log_entry = f"[{self.game_time:7.2f}s] AMUMU HIT: AD={damage:.2f} x{dmg_mod:.2f}{armor_str} = {modified:.2f} phys → Blue (HP: {old_hp:.1f} → {self.blue.hp:.1f})"
-                print(log_entry)
-                with open("damage_log.txt", "a", encoding='utf-8') as f:
-                    f.write(log_entry + "\n")
+                log_entries.append(log_entry)
             self.blue.trigger_aggro(self.player)
 
         # --- Blue auto-attack → Player (physical damage + 5% current HP bonus) ---
@@ -752,17 +765,20 @@ class JungleOptimizer():
             old_hp = self.player.hp
             self.player.hp = round(max(0, self.player.hp - modified), 1)
             if pet:
+                pet.on_owner_attacked()  # Notify pet that owner is being attacked
                 log_entry = f"[{self.game_time:7.2f}s] BLUE HIT:  AD={blue_damage:.2f} +{bonus_hp_pct*100:.0f}%curHP({bonus_hp_dmg:.2f}) ={total_base:.2f} x{rcv_mod:.2f} x{mit_factor:.3f}(armor={player_armor:.1f}) = {modified:.2f} phys → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})"
-                print(log_entry)
-                with open("damage_log.txt", "a", encoding='utf-8') as f:
-                    f.write(log_entry + "\n")
+                log_entries.append(log_entry)
 
         # --- Jungle pet update (true damage, no mitigation) ---
         if pet:
             monsters_attacking = []
             if self.blue.aggro and self.blue.aggro_target is self.player:
-                monsters_attacking.append(self.blue)
-            pet_dmg, pet_heal, tick_fired = pet.update(dt, monsters_attacking)
+                # Check if Blue is within 650 range of player
+                dx = self.blue.x - self.player.x
+                dy = self.blue.y - self.player.y
+                if math.sqrt(dx**2 + dy**2) <= 650:
+                    monsters_attacking.append(self.blue)
+            pet_dmg, pet_heal, pet_mana, tick_fired = pet.update(dt, monsters_attacking)
             for monster, dmg in pet_dmg.items():
                 old_hp = monster.hp
                 monster.hp = max(0, monster.hp - dmg)
@@ -772,14 +788,41 @@ class JungleOptimizer():
                       f"(per-sec={bd['total']:.2f}: base={bd['base']:.2f} +{bd['ad']:.2f}bAD +{bd['ap']:.2f}AP " \
                       f"+{bd['armor']:.2f}bAr +{bd['mr']:.2f}bMR +{bd['hp']:.2f}bHP) " \
                       f"(HP: {old_hp:.1f} → {monster.hp:.1f})"
-                print(log_entry)
-                with open("damage_log.txt", "a", encoding='utf-8') as f:
+                log_entries.append(log_entry)
+                # Check if large monster died (Blue is always large)
+                if old_hp > 0 and monster.hp <= 0 and monster is self.blue:
+                    pet.on_large_monster_killed(self.player.level)
                     f.write(log_entry + "\n")
             if pet_heal > 0:
                 old_hp = self.player.hp
                 self.player.hp = round(min(self.player.max_hp, self.player.hp + pet_heal), 1)
                 heal_ps = pet.get_heal_per_second(self.player.level)
-                print(f"[{self.game_time:7.2f}s] PET HEAL:  +{pet_heal:.2f} ({heal_ps:.2f}/s) → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})")
+                log_entry = f"[{self.game_time:7.2f}s] PET HEAL:  +{pet_heal:.2f} ({heal_ps:.2f}/s) → Amumu (HP: {old_hp:.1f} → {self.player.hp:.1f})"
+                log_entries.append(log_entry)
+            if pet_mana > 0:
+                old_mana = self.player.mana
+                self.player.mana = round(min(self.player.max_mana, self.player.mana + pet_mana), 1)
+                log_entry = f"[{self.game_time:7.2f}s] PET MANA:  +{pet_mana:.2f} → Amumu (Mana: {old_mana:.1f} → {self.player.mana:.1f})"
+                log_entries.append(log_entry)
+
+        # Update logging offset for first log entry
+        if self.first_log_time is None and (damage > 0 or blue_damage > 0 or pet_dmg or pet_heal > 0 or pet_mana > 0):
+            self.first_log_time = self.game_time
+            self.logging_offset = 0.6 - self.first_log_time
+
+        # Apply offset to log entries and output them
+        if log_entries:
+            for entry in log_entries:
+                # Extract and adjust the time in the entry
+                start = entry.find('[') + 1
+                end = entry.find('s]')
+                time_str = entry[start:end]
+                original_time = float(time_str)
+                adjusted_time = original_time + self.logging_offset
+                adjusted_entry = entry.replace(f"[{time_str}s]", f"[{adjusted_time:7.2f}s]")
+                print(adjusted_entry)
+                with open("damage_log.txt", "a", encoding='utf-8') as f:
+                    f.write(adjusted_entry + "\n")
 
         # --- HP and mana regeneration ---
         if hasattr(self.player, 'hp5') and self.player.hp < self.player.max_hp:

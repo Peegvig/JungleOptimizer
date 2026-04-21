@@ -671,10 +671,12 @@ class JunglePet:
     def __init__(self, owner):
         self.owner = owner
         self.attack_radius = 650
-        self.tick_interval = 0.5  # Half-second intervals
+        self.tick_interval = 1.0  # One-second intervals
         self.tick_timer = 0.0
         self.active = False
-        self.extra_ticks_remaining = 0  # Ticks remaining after owner stops attacking
+        self.extra_ticks_remaining = 0  # Ticks remaining after owner stops being attacked
+        self.attack_delay_timer = None  # Time since owner was last attacked (for 0.6s delay)
+        self.pending_kill_heals = []  # List of (timer, level) for delayed heals after kills
 
         # Damage modifiers for jungle monsters
         self.damage_dealt_modifier = 1.10   # 110% damage to monsters
@@ -720,58 +722,82 @@ class JunglePet:
         """Calculate heal per second based on owner level."""
         return 14 + 2 * (level - 1)
 
-    def update(self, dt, monsters_attacking_owner):
+    def on_large_monster_killed(self, level):
+        """Record a large monster kill for delayed heal/mana restore."""
+        self.pending_kill_heals.append([0.0, level])  # [timer, level]
+
+    def on_owner_attacked(self):
+        """Called when owner is attacked - starts the pet activation timer."""
+        if self.attack_delay_timer is None:
+            self.attack_delay_timer = 0.0
+
+    def update(self, dt, attacking_monsters):
         """Tick the pet. Returns (damage_dict {monster: dmg}, heal_amount, tick_fired)."""
         damage_dict = {}
         heal = 0.0
+        mana_restore = 0.0
         tick_fired = False
 
-        owner_attacking = self.owner.attack_target is not None
+        # Process pending kill heals (0.3 second delay)
+        for kill_entry in self.pending_kill_heals[:]:  # Copy list to avoid modification issues
+            kill_entry[0] += dt
+            if kill_entry[0] >= 0.3:
+                level = kill_entry[1]
+                capped_level = min(level, 9)
+                
+                # Calculate heal: (70 + 20 * level) * (1 + 0.0125 * % missing health)
+                missing_hp_pct = 1.0 - (self.owner.hp / self.owner.max_hp)
+                kill_heal = (70 + 20 * capped_level) * (1 + 0.0125 * missing_hp_pct * 100)
+                heal += kill_heal
+                
+                # Calculate mana restore: (15 + 4 * level) * (1 + 0.0125 * % missing mana)
+                missing_mana_pct = 1.0 - (self.owner.mana / self.owner.max_mana) if self.owner.max_mana > 0 else 0
+                kill_mana = (15 + 4 * capped_level) * (1 + 0.0125 * missing_mana_pct * 100)
+                mana_restore += kill_mana
+                
+                self.pending_kill_heals.remove(kill_entry)
 
-        if owner_attacking:
-            self.active = True
-            self.extra_ticks_remaining = 4  # 2 full attacks = 4 half-second ticks
-
-        if not self.active:
-            return damage_dict, heal, tick_fired
-
-        # Gather valid targets within attack radius
-        targets = []
-        for m in monsters_attacking_owner:
-            dx = m.x - self.owner.x
-            dy = m.y - self.owner.y
-            if math.sqrt(dx**2 + dy**2) <= self.attack_radius:
-                targets.append(m)
-
-        if not targets and not owner_attacking:
+        # Manage attack delay timer and activation
+        if self.attack_delay_timer is not None:
+            self.attack_delay_timer += dt
+            if self.attack_delay_timer >= 0.6:
+                # 0.6 seconds after being attacked, activate pet
+                self.active = True
+                self.tick_timer = 0.0  # Reset tick timer to start immediately after delay
+        else:
+            # No longer being attacked - deactivate
             self.active = False
             self.tick_timer = 0.0
-            return damage_dict, heal, tick_fired
+
+        if not self.active or not attacking_monsters:
+            return damage_dict, heal, mana_restore, tick_fired
+
+        # All attacking monsters are valid targets
+        targets = attacking_monsters
+
+        if not targets:
+            self.attack_delay_timer = None
 
         self.tick_timer += dt
-        while self.tick_timer >= self.tick_interval and self.active:
+        while self.tick_timer >= self.tick_interval and self.active and targets:
             self.tick_timer -= self.tick_interval
             tick_fired = True
             level = self.owner.level
 
+            # Deal damage to all attacking targets
             for m in targets:
                 is_epic = getattr(m, 'is_epic', False)
                 per_sec = self.get_pet_damage_per_second(level, is_epic)
-                tick_dmg = per_sec / 2  # Half-second tick = half per-second damage
+                tick_dmg = per_sec  # One-second tick = full per-second damage
                 if m not in damage_dict:
                     damage_dict[m] = 0
                 damage_dict[m] += tick_dmg
 
+            # Apply heal whenever dealing damage
             heal_per_sec = self.get_heal_per_second(level)
-            heal += heal_per_sec / 2
+            heal += heal_per_sec
 
-            if not owner_attacking:
-                self.extra_ticks_remaining -= 1
-                if self.extra_ticks_remaining <= 0:
-                    self.active = False
-                    break
-
-        return damage_dict, heal, tick_fired
+        return damage_dict, heal, mana_restore, tick_fired
 
 
 class Blue:
