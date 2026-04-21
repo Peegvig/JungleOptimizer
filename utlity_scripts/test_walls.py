@@ -6,10 +6,10 @@ import pygame
 
 # Test loading walls
 try:
-    with open("walls.json", "r") as f:
+    with open("walls/walls.json", "r") as f:
         walls_data = json.load(f)
     
-    print(f"✓ Successfully loaded walls.json")
+    print(f"✓ Successfully loaded walls/walls.json")
     print(f"✓ Number of polygons: {len(walls_data)}")
     
     if isinstance(walls_data, list) and len(walls_data) > 0:
@@ -44,7 +44,7 @@ try:
         print(f"  First wall rect: x={walls[0][0]:.1f}, y={walls[0][1]:.1f}, w={walls[0][2]:.1f}, h={walls[0][3]:.1f}")
         
 except FileNotFoundError:
-    print("✗ walls.json not found!")
+    print("✗ walls/walls.json not found!")
 except json.JSONDecodeError as e:
     print(f"✗ Error parsing JSON: {e}")
 except Exception as e:

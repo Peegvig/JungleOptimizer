@@ -42,7 +42,7 @@ walls = unary_union(polygons)
 
 
 
-def export_walls_json(walls, filename="walls.json"):
+def export_walls_json(walls, filename="walls/walls.json"):
     data = []
     if walls.geom_type == "Polygon":
         data.append(list(walls.exterior.coords))
@@ -53,4 +53,4 @@ def export_walls_json(walls, filename="walls.json"):
         json.dump(data, f)
 
 export_walls_json(walls)
-print("Walls exported to walls.json")
+print("Walls exported to walls/walls.json")

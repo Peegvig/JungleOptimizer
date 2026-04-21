@@ -68,7 +68,7 @@ class PathGrid:
 
     def _load_or_build(self, world_w, world_h, wall_polygons, wall_bounds, pathing_radius):
         """Load cached grid from disk or build and cache it."""
-        cache_file = "pathgrid_cache.json"
+        cache_file = "walls/pathgrid_cache.json"
         grid_hash = self._grid_hash(world_w, world_h, wall_polygons, pathing_radius)
 
         if os.path.exists(cache_file):

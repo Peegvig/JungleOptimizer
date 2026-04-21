@@ -671,7 +671,7 @@ class JunglePet:
     def __init__(self, owner):
         self.owner = owner
         self.attack_radius = 650
-        self.tick_interval = 1.0  # One-second intervals
+        self.tick_interval = 0.8  # Pet ticks every 0.8 seconds
         self.tick_timer = 0.0
         self.active = False
         self.extra_ticks_remaining = 0  # Ticks remaining after owner stops being attacked
@@ -719,8 +719,8 @@ class JunglePet:
         }
 
     def get_heal_per_second(self, level):
-        """Calculate heal per second based on owner level."""
-        return 14 + 2 * (level - 1)
+        """Calculate heal per second based on owner level (6 at level 1)."""
+        return 6 + (30.0 / 17.0) * (level - 1)
 
     def on_large_monster_killed(self, level):
         """Record a large monster kill for delayed heal/mana restore."""
@@ -759,11 +759,15 @@ class JunglePet:
 
         # Manage attack delay timer and activation
         if self.attack_delay_timer is not None:
+            old_delay = self.attack_delay_timer
             self.attack_delay_timer += dt
             if self.attack_delay_timer >= 0.6:
                 # 0.6 seconds after being attacked, activate pet
                 self.active = True
-                self.tick_timer = 0.0  # Reset tick timer to start immediately after delay
+                # On first crossing only: prime tick_timer so the first dmg/heal happens
+                # this frame (no extra 1s wait); later ticks still use tick_interval.
+                if old_delay < 0.6:
+                    self.tick_timer = self.tick_interval
         else:
             # No longer being attacked - deactivate
             self.active = False
@@ -788,7 +792,7 @@ class JunglePet:
             for m in targets:
                 is_epic = getattr(m, 'is_epic', False)
                 per_sec = self.get_pet_damage_per_second(level, is_epic)
-                tick_dmg = per_sec  # One-second tick = full per-second damage
+                tick_dmg = per_sec
                 if m not in damage_dict:
                     damage_dict[m] = 0
                 damage_dict[m] += tick_dmg

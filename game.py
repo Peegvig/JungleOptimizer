@@ -25,8 +25,12 @@ class JungleOptimizer():
         self.clock = pygame.time.Clock()
         self.fps = fps
 
-        # Clear damage log for new run
-        with open("damage_log.txt", "w", encoding='utf-8') as f:
+        # Clear damage logs for new run
+        with open("logs/damage_log.txt", "w", encoding='utf-8') as f:
+            f.write("")
+        with open("logs/amumu_hp_log.txt", "w", encoding='utf-8') as f:
+            f.write("")
+        with open("logs/blue_hp_log.txt", "w", encoding='utf-8') as f:
             f.write("")
 
         # Create player champion based on selection
@@ -74,7 +78,7 @@ class JungleOptimizer():
         self.border_color = (255, 0, 0)
         
         # Load walls from JSON
-        self.walls = self.load_walls_from_json("walls.json")
+        self.walls = self.load_walls_from_json("walls/walls.json")
         
         # Give Blue the wall data for A* pathfinding
         self.blue.set_walls(self.wall_polygons, self.wall_bounds)
@@ -117,8 +121,9 @@ class JungleOptimizer():
         
         self.score = 0
         self.game_time = 0.0  # Elapsed game time in seconds
+        self.natural_regen_accumulator = 0.0  # Seconds toward next HP/MP5 tick (1 Hz)
         self.first_log_time = None  # Track first log entry for time offset
-        self.logging_offset = 0.0  # Offset to make first log appear at 0.6s
+        self.logging_offset = 0.0  # Offset to make first log appear at 0.633s
 
     def load_walls_from_json(self, filename):
         """Load wall polygons from JSON file"""
@@ -721,7 +726,6 @@ class JungleOptimizer():
         pet_heal = 0
         pet_mana = 0
         log_entries = []  # Collect log entries to apply offset later
-        log_entries = []  # Collect log entries to apply offset later
 
         # Clear click marker when player reaches destination or stops moving
         if self.click_marker is not None:
@@ -792,7 +796,6 @@ class JungleOptimizer():
                 # Check if large monster died (Blue is always large)
                 if old_hp > 0 and monster.hp <= 0 and monster is self.blue:
                     pet.on_large_monster_killed(self.player.level)
-                    f.write(log_entry + "\n")
             if pet_heal > 0:
                 old_hp = self.player.hp
                 self.player.hp = round(min(self.player.max_hp, self.player.hp + pet_heal), 1)
@@ -805,10 +808,41 @@ class JungleOptimizer():
                 log_entry = f"[{self.game_time:7.2f}s] PET MANA:  +{pet_mana:.2f} → Amumu (Mana: {old_mana:.1f} → {self.player.mana:.1f})"
                 log_entries.append(log_entry)
 
+        # --- Natural regeneration (hp5/mp5 are per 5 seconds; apply every 0.5 seconds) ---
+        self.natural_regen_accumulator += dt
+        while self.natural_regen_accumulator >= 0.5:
+            self.natural_regen_accumulator -= 0.5
+            if hasattr(self.player, 'hp5') and self.player.hp < self.player.max_hp:
+                tick_hp = self.player.hp5 / 10.0
+                old_hp = self.player.hp
+                self.player.hp = round(min(self.player.max_hp, self.player.hp + tick_hp), 1)
+                gained = self.player.hp - old_hp
+                if gained > 0:
+                    log_entries.append(
+                        f"[{self.game_time:7.2f}s] NAT REGEN HP: +{gained:.2f} (hp5={self.player.hp5:.2f}/5s → {tick_hp:.2f}/0.5s) "
+                        f"→ {self.champion_name} (HP: {old_hp:.1f} → {self.player.hp:.1f})"
+                    )
+            if hasattr(self.player, 'mp5') and self.player.mana < self.player.max_mana:
+                tick_mp = self.player.mp5 / 10.0
+                old_mp = self.player.mana
+                self.player.mana = round(min(self.player.max_mana, self.player.mana + tick_mp), 1)
+                gained = self.player.mana - old_mp
+                if gained > 0:
+                    log_entries.append(
+                        f"[{self.game_time:7.2f}s] NAT REGEN MP: +{gained:.2f} (mp5={self.player.mp5:.2f}/5s → {tick_mp:.2f}/0.5s) "
+                        f"→ {self.champion_name} (Mana: {old_mp:.1f} → {self.player.mana:.1f})"
+                    )
+
+        nat_regen_logged = any(
+            ("NAT REGEN HP:" in e or "NAT REGEN MP:" in e) for e in log_entries
+        )
+
         # Update logging offset for first log entry
-        if self.first_log_time is None and (damage > 0 or blue_damage > 0 or pet_dmg or pet_heal > 0 or pet_mana > 0):
+        if self.first_log_time is None and (
+            damage > 0 or blue_damage > 0 or pet_dmg or pet_heal > 0 or pet_mana > 0 or nat_regen_logged
+        ):
             self.first_log_time = self.game_time
-            self.logging_offset = 0.6 - self.first_log_time
+            self.logging_offset = 0.633 - self.first_log_time
 
         # Apply offset to log entries and output them
         if log_entries:
@@ -821,16 +855,15 @@ class JungleOptimizer():
                 adjusted_time = original_time + self.logging_offset
                 adjusted_entry = entry.replace(f"[{time_str}s]", f"[{adjusted_time:7.2f}s]")
                 print(adjusted_entry)
-                with open("damage_log.txt", "a", encoding='utf-8') as f:
+                with open("logs/damage_log.txt", "a", encoding='utf-8') as f:
                     f.write(adjusted_entry + "\n")
-
-        # --- HP and mana regeneration ---
-        if hasattr(self.player, 'hp5') and self.player.hp < self.player.max_hp:
-            hp_regen = self.player.hp5 / 5.0 * dt
-            self.player.hp = round(min(self.player.max_hp, self.player.hp + hp_regen), 1)
-        if hasattr(self.player, 'mp5') and self.player.mana < self.player.max_mana:
-            mp_regen = self.player.mp5 / 5.0 * dt
-            self.player.mana = round(min(self.player.max_mana, self.player.mana + mp_regen), 1)
+                # Split channels for HP tracking while preserving combined log.
+                if "→ Amumu (HP:" in adjusted_entry:
+                    with open("logs/amumu_hp_log.txt", "a", encoding='utf-8') as f:
+                        f.write(adjusted_entry + "\n")
+                if "→ Blue" in adjusted_entry and "(HP:" in adjusted_entry:
+                    with open("logs/blue_hp_log.txt", "a", encoding='utf-8') as f:
+                        f.write(adjusted_entry + "\n")
 
         # Update cooldowns
         self.player.update_cooldowns()

@@ -6,5 +6,5 @@ runs
 *.dat
 models
 runpod_models
-pathgrid_cache.json
-damage_log.txt
+walls/pathgrid_cache.json
+logs/*.txt
