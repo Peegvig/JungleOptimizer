@@ -120,6 +120,7 @@ class JungleOptimizer():
         self.announcement_font = pygame.font.SysFont(None, 100)
         
         self.score = 0
+        self.monster_kills = 0
         self.game_time = 0.0  # Elapsed game time in seconds
         self.natural_regen_accumulator = 0.0  # Seconds toward next HP/MP5 tick (1 Hz)
         self.first_log_time = None  # Track first log entry for time offset
@@ -251,7 +252,8 @@ class JungleOptimizer():
                     pygame.draw.polygon(self.screen, (0, 100, 0), screen_polygon, 3)
 
         # Draw leash range circle (behind sprites)
-        self.draw_leash_circle(self.blue, world_to_screen)
+        if not self.blue.is_dead:
+            self.draw_leash_circle(self.blue, world_to_screen)
 
         # Draw click marker (green circle at right-click destination)
         if self.click_marker is not None:
@@ -274,27 +276,31 @@ class JungleOptimizer():
         else:
             pygame.draw.circle(self.screen, (255, 0, 0), (int(screen_x), int(screen_y)), int(player_radius))
         
-        screen_x, screen_y = world_to_screen(self.blue.x, self.blue.y)
-        blue_radius = self.blue.radius * self.zoom
-        if self.blue.images:
-            # Cache scaled blue image to avoid rescaling every frame
-            if self.scaled_blue_image is None or self.cached_blue_size != int(blue_radius * 2):
-                self.scaled_blue_image = pygame.transform.scale(self.blue.images, (int(blue_radius * 2), int(blue_radius * 2)))
-                self.cached_blue_size = int(blue_radius * 2)
-            self.screen.blit(self.scaled_blue_image, (int(screen_x - blue_radius), int(screen_y - blue_radius)))
-        else:
-            pygame.draw.circle(self.screen, (0, 0, 255), (int(screen_x), int(screen_y)), int(blue_radius))
+        if not self.blue.is_dead:
+            screen_x, screen_y = world_to_screen(self.blue.x, self.blue.y)
+            blue_radius = self.blue.radius * self.zoom
+            if self.blue.images:
+                # Cache scaled blue image to avoid rescaling every frame
+                if self.scaled_blue_image is None or self.cached_blue_size != int(blue_radius * 2):
+                    self.scaled_blue_image = pygame.transform.scale(self.blue.images, (int(blue_radius * 2), int(blue_radius * 2)))
+                    self.cached_blue_size = int(blue_radius * 2)
+                self.screen.blit(self.scaled_blue_image, (int(screen_x - blue_radius), int(screen_y - blue_radius)))
+            else:
+                pygame.draw.circle(self.screen, (0, 0, 255), (int(screen_x), int(screen_y)), int(blue_radius))
 
         # Draw health bars above characters
         self.draw_health_bar(self.player, world_to_screen, is_monster=False)
-        self.draw_health_bar(self.blue, world_to_screen, is_monster=True)
+        if not self.blue.is_dead:
+            self.draw_health_bar(self.blue, world_to_screen, is_monster=True)
 
         # Draw attack animation bar above player's health bar
         self.draw_attack_bar(self.player, world_to_screen)
-        self.draw_blue_attack_bar(self.blue, world_to_screen)
+        if not self.blue.is_dead:
+            self.draw_blue_attack_bar(self.blue, world_to_screen)
 
         # Draw patience bar below Blue's health bar
-        self.draw_patience_bar(self.blue, world_to_screen)
+        if not self.blue.is_dead:
+            self.draw_patience_bar(self.blue, world_to_screen)
 
         # Display champion info
         champ_surface = self.font.render(f"Champion: {self.champion_name}", True, (255, 0, 0))
@@ -309,6 +315,12 @@ class JungleOptimizer():
         
         score_surface = self.font.render(f"Score: {self.score}", True, (255, 0, 0))
         self.screen.blit(score_surface, (10, 130))
+
+        xp_surface = self.font.render(f"XP: {int(self.player.xp)}", True, (255, 255, 255))
+        self.screen.blit(xp_surface, (10, 210))
+
+        level_surface = self.font.render(f"Level: {self.player.level}", True, (255, 255, 255))
+        self.screen.blit(level_surface, (10, 250))
         
         # Display zoom level
         zoom_percentage = int((self.zoom / self.base_zoom) * 100)
@@ -619,7 +631,7 @@ class JungleOptimizer():
                     # Check if clicking on Blue (within its gameplay radius)
                     dx = world_x - self.blue.x
                     dy = world_y - self.blue.y
-                    if math.sqrt(dx**2 + dy**2) <= self.blue.radius:
+                    if not self.blue.is_dead and math.sqrt(dx**2 + dy**2) <= self.blue.radius:
                         self.player.set_attack_target(self.blue)
                     else:
                         # Snap to nearest walkable position if clicking in a wall
@@ -684,7 +696,7 @@ class JungleOptimizer():
                 # Check if cursor is over Blue — start attacking
                 dx = world_x - self.blue.x
                 dy = world_y - self.blue.y
-                if math.sqrt(dx**2 + dy**2) <= self.blue.radius:
+                if not self.blue.is_dead and math.sqrt(dx**2 + dy**2) <= self.blue.radius:
                     if self.player.attack_target is not self.blue:
                         self.player.set_attack_target(self.blue)
                 elif self.player.attack_target is None:
@@ -712,8 +724,10 @@ class JungleOptimizer():
             self.camera_following = False
 
         # Update champion movement first (so entering attack range is detected this frame)
-        self.player.update_movement(collide_with=self.blue, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
-        self.blue.update_movement(collide_with=self.player, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
+        player_collide_with = None if self.blue.is_dead else self.blue
+        self.player.update_movement(collide_with=player_collide_with, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
+        if not self.blue.is_dead:
+            self.blue.update_movement(collide_with=self.player, wall_polygons=self.wall_polygons, wall_bounds=self.wall_bounds)
 
         # Update auto-attack (after movement so attack starts immediately on entering range)
         dt = 1.0 / self.fps
@@ -753,6 +767,8 @@ class JungleOptimizer():
                 log_entry = f"[{self.game_time:7.2f}s] AMUMU HIT: AD={damage:.2f} x{dmg_mod:.2f}{armor_str} = {modified:.2f} phys → Blue (HP: {old_hp:.1f} → {self.blue.hp:.1f})"
                 log_entries.append(log_entry)
             self.blue.trigger_aggro(self.player)
+            if old_hp > 0 and self.blue.hp <= 0:
+                self.handle_monster_death(self.blue, "amumu auto")
 
         # --- Blue auto-attack → Player (physical damage + 5% current HP bonus) ---
         blue_damage = self.blue.update_ai(dt)
@@ -796,6 +812,7 @@ class JungleOptimizer():
                 # Check if large monster died (Blue is always large)
                 if old_hp > 0 and monster.hp <= 0 and monster is self.blue:
                     pet.on_large_monster_killed(self.player.level)
+                    self.handle_monster_death(monster, "pet")
             if pet_heal > 0:
                 old_hp = self.player.hp
                 self.player.hp = round(min(self.player.max_hp, self.player.hp + pet_heal), 1)
@@ -872,3 +889,46 @@ class JungleOptimizer():
 
         pygame.display.flip() # Updates display
         self.clock.tick(self.fps)  # Cap framerate at specified FPS
+
+    def handle_monster_death(self, monster, source):
+        """Handle one-time cleanup and XP rewards when a jungle monster dies."""
+        if getattr(monster, "is_dead", False):
+            return
+
+        monster.is_dead = True
+        monster.hp = 0
+        monster.aggro = False
+        monster.aggro_target = None
+        monster.is_moving = False
+        monster.target_x = None
+        monster.target_y = None
+        monster.is_attacking = False
+        monster.attack_winding_up = False
+        monster.attack_windup_elapsed = 0.0
+        monster.attack_cooldown = 0.0
+        monster.leash_circle_visible = False
+        monster.path_waypoints = []
+
+        if self.player.attack_target is monster:
+            self.player.attack_target = None
+            self.player.attack_winding_up = False
+            self.player.attack_windup_elapsed = 0.0
+            self.player.attack_committed = False
+            self.player.attack_commit_timer = 0.0
+            self.player.pending_attack_damage = 0
+
+        self.monster_kills += 1
+        first_kill_bonus_xp = 150 if self.monster_kills == 1 else 0
+        pet_buff_xp = 80 + first_kill_bonus_xp
+        blue_xp = 95
+        gained_xp = pet_buff_xp + blue_xp
+        if hasattr(self.player, "add_xp"):
+            self.player.add_xp(gained_xp)
+        else:
+            self.player.xp += gained_xp
+
+        print(
+            f"[{self.game_time:7.2f}s] BLUE DEAD ({source}). "
+            f"XP +{gained_xp} (pet buff +{pet_buff_xp}, blue +{blue_xp}) "
+            f"→ total XP {int(self.player.xp)}"
+        )

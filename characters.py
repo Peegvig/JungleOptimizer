@@ -24,6 +24,7 @@ class Champion:
         self.armor = 20
         
         self.score = 0
+        self.xp = 0
 
         # Jungle pet (set by subclass if applicable)
         self.pet = None
@@ -443,11 +444,26 @@ class Champion:
 
 class Amumu(Champion):
     """The Sad Mummy - Tank jungler"""
+    LEVEL_XP_THRESHOLDS = [
+        0, 280, 660, 1140, 1720, 2400, 3180, 4060, 5040,
+        6120, 7300, 8580, 9960, 11440, 13020, 14700, 16480, 18360
+    ]
 
     @staticmethod
     def level_growth(growth, level):
         """Standard League of Legends per-level stat growth formula."""
         return growth * (level - 1) * (0.7025 + 0.0175 * (level - 1))
+
+    @classmethod
+    def level_from_xp(cls, xp):
+        """Return level (1-18) for a cumulative XP total."""
+        level = 1
+        for idx, threshold in enumerate(cls.LEVEL_XP_THRESHOLDS, start=1):
+            if xp >= threshold:
+                level = idx
+            else:
+                break
+        return min(level, 18)
 
     def __init__(self, world_width, world_height):
         super().__init__(world_width, world_height)
@@ -461,11 +477,31 @@ class Amumu(Champion):
         self.attack_range = 195  # Edge-to-edge
 
         # Base stat values at level 1 (used for bonus-stat calculations)
-        self.base_ad = 57
+        self.base_ad = 570 #57, TESTING!
         self.base_armor_value = 33
         self.base_mr = 32
         self.base_max_hp = 685
+        self.base_move_speed = 335
+        self.base_max_mana = 285
+        self.base_hp5 = 9
+        self.base_mp5 = 7.4
+        self.base_attack_speed = 0.736
         self.ap = 18  # Ability power (flat)
+
+        # Per-level growth values
+        self.hp_growth = 94
+        self.hp5_growth = 0.85
+        self.armor_growth = 4
+        self.mr_growth = 2.05
+        self.mana_growth = 40
+        self.mp5_growth = 0.55
+        self.ad_growth = 3.8
+        self.attack_speed_ratio = 0.0218
+        self.attack_speed_scaling = 0.638
+
+        # Jungle pet scaling constants
+        self.pet_hp_min = 10
+        self.pet_hp_max = 180
 
         # Jungle pet (created before set_level so pet bonus HP is included)
         self.pet = JunglePet(self)
@@ -484,37 +520,61 @@ class Amumu(Champion):
         self.level = level
         g = Amumu.level_growth
 
-        # Health: base 685 + growth + pet bonus HP (10 at lvl1 → 180 at lvl18)
-        champion_hp = 685 + g(94, level)
-        pet_hp = (10 + (180 - 10) / 17 * (level - 1)) if self.pet else 0
+        # Health: base + growth + pet bonus HP (lvl1 -> lvl18)
+        champion_hp = self.base_max_hp + g(self.hp_growth, level)
+        pet_hp = (
+            self.pet_hp_min + (self.pet_hp_max - self.pet_hp_min) / 17 * (level - 1)
+        ) if self.pet else 0
         self.max_hp = round(champion_hp + pet_hp, 1)
         self.hp = self.max_hp
 
         # HP regen per 5 seconds
-        self.hp5 = 9 + g(0.85, level)
+        self.hp5 = self.base_hp5 + g(self.hp5_growth, level)
 
         # Armor
-        self.armor = 33 + g(4, level)
+        self.armor = self.base_armor_value + g(self.armor_growth, level)
 
         # Magic resistance
-        self.magic_resistance = 32 + g(2.05, level)
+        self.magic_resistance = self.base_mr + g(self.mr_growth, level)
 
         # Move speed (335 League MS → game units per frame: MS / 64)
-        self.speed = 335 / 64
+        self.speed = self.base_move_speed / 64
 
         # Mana
-        self.max_mana = round(285 + g(40, level), 1)
+        self.max_mana = round(self.base_max_mana + g(self.mana_growth, level), 1)
         self.mana = self.max_mana
 
         # Mana regen per 5 seconds
-        self.mp5 = 7.4 + g(0.55, level)
+        self.mp5 = self.base_mp5 + g(self.mp5_growth, level)
 
         # Attack damage
-        self.base_attack_damage_value = 57 + g(3.8, level)
+        self.base_attack_damage_value = self.base_ad + g(self.ad_growth, level)
         self.attack_damage = self.base_attack_damage_value
 
         # Attack speed
-        self.attack_speed = 0.736 * (1 + 0.0218 * level * 0.638)
+        self.attack_speed = self.base_attack_speed * (
+            1 + self.attack_speed_ratio * level * self.attack_speed_scaling
+        )
+
+    def add_xp(self, amount):
+        """Add XP and update level using the configured cumulative thresholds."""
+        if amount <= 0:
+            return
+
+        self.xp += amount
+        new_level = Amumu.level_from_xp(self.xp)
+        if new_level == self.level:
+            return
+
+        # Preserve current health/mana ratios across level recalculation.
+        hp_ratio = self.hp / self.max_hp if self.max_hp > 0 else 1.0
+        mana_ratio = self.mana / self.max_mana if self.max_mana > 0 else 1.0
+        old_level = self.level
+
+        self.set_level(new_level)
+        self.hp = round(self.max_hp * hp_ratio, 1)
+        self.mana = round(self.max_mana * mana_ratio, 1)
+        print(f"LEVEL UP: {old_level} -> {new_level} (XP: {int(self.xp)})")
 
     def cast_q(self):
         """Bandage Toss - Q ability"""
@@ -542,120 +602,6 @@ class Amumu(Champion):
             self.mana -= 40
             print("Tantrum! (Amumu E)")
             # TODO: Implement Tantrum logic (damage reduction + counter damage)
-            self.e_cooldown = self.E_COOLDOWN
-        else:
-            print(f"E on cooldown: {self.e_cooldown} frames")
-
-
-class LeeSin(Champion):
-    """The Blind Monk - Skill-based jungler"""
-
-    def __init__(self, world_width, world_height):
-        super().__init__(world_width, world_height)
-        
-        # Lee Sin stats
-        self.speed = 9.38
-        self.hp = 520
-        self.max_hp = 520
-        self.mana = 200
-        self.max_mana = 200
-        self.attack_damage = 60
-        self.armor = 22
-        
-        # Lee Sin ability cooldowns
-        self.Q_COOLDOWN = 80  # Sonic Wave
-        self.W_COOLDOWN = 70  # Safeguard
-        self.E_COOLDOWN = 100  # Tempest
-        
-        # Load Lee Sin image
-        self.images = pygame.transform.scale(
-            pygame.image.load("images/lee_sin.png"), 
-            (self.size, self.size)
-        )
-
-    def cast_q(self):
-        """Sonic Wave - Q ability"""
-        if self.q_cooldown <= 0:
-            self.mana -= 55
-            print("Sonic Wave! (Lee Sin Q)")
-            # TODO: Implement Sonic Wave logic (skillshot projectile)
-            self.q_cooldown = self.Q_COOLDOWN
-        else:
-            print(f"Q on cooldown: {self.q_cooldown} frames")
-
-    def cast_w(self):
-        """Safeguard - W ability"""
-        if self.w_cooldown <= 0:
-            self.mana -= 50
-            print("Safeguard! (Lee Sin W)")
-            # TODO: Implement Safeguard logic (shield, dash to target)
-            self.w_cooldown = self.W_COOLDOWN
-        else:
-            print(f"W on cooldown: {self.w_cooldown} frames")
-
-    def cast_e(self):
-        """Tempest - E ability"""
-        if self.e_cooldown <= 0:
-            self.mana -= 65
-            print("Tempest! (Lee Sin E)")
-            # TODO: Implement Tempest logic (AoE slow)
-            self.e_cooldown = self.E_COOLDOWN
-        else:
-            print(f"E on cooldown: {self.e_cooldown} frames")
-
-
-class Elise(Champion):
-    """The Spider Queen - Versatile jungler"""
-
-    def __init__(self, world_width, world_height):
-        super().__init__(world_width, world_height)
-        
-        # Elise stats
-        self.speed = 7.81
-        self.hp = 510
-        self.max_hp = 510
-        self.mana = 340
-        self.max_mana = 340
-        self.attack_damage = 53
-        self.armor = 21
-        
-        # Elise ability cooldowns
-        self.Q_COOLDOWN = 70  # Neurotoxin/Venomous Bite
-        self.W_COOLDOWN = 100  # Volatile Spiderling/Skittering Frenzy
-        self.E_COOLDOWN = 110  # Cocoon/Rappel
-        
-        # Load Elise image
-        self.images = pygame.transform.scale(
-            pygame.image.load("images/elise.png"), 
-            (self.size, self.size)
-        )
-
-    def cast_q(self):
-        """Neurotoxin/Venomous Bite - Q ability"""
-        if self.q_cooldown <= 0:
-            self.mana -= 60
-            print("Neurotoxin! (Elise Q)")
-            # TODO: Implement Neurotoxin logic (target damage)
-            self.q_cooldown = self.Q_COOLDOWN
-        else:
-            print(f"Q on cooldown: {self.q_cooldown} frames")
-
-    def cast_w(self):
-        """Volatile Spiderling/Skittering Frenzy - W ability"""
-        if self.w_cooldown <= 0:
-            self.mana -= 70
-            print("Volatile Spiderling! (Elise W)")
-            # TODO: Implement Volatile Spiderling logic (summon spiders)
-            self.w_cooldown = self.W_COOLDOWN
-        else:
-            print(f"W on cooldown: {self.w_cooldown} frames")
-
-    def cast_e(self):
-        """Cocoon/Rappel - E ability"""
-        if self.e_cooldown <= 0:
-            self.mana -= 50
-            print("Cocoon! (Elise E)")
-            # TODO: Implement Cocoon logic (stun/displacement)
             self.e_cooldown = self.E_COOLDOWN
         else:
             print(f"E on cooldown: {self.e_cooldown} frames")
@@ -823,6 +769,7 @@ class Blue:
         # Blue Sentinel stats
         self.hp = 2300
         self.max_hp = 2300
+        self.is_dead = False
         self.armor = 42
         self.magic_resistance = 42
         self.bonus_phys_current_hp_percent = 0.05  # 5% target current HP bonus physical damage
@@ -946,6 +893,8 @@ class Blue:
 
     def trigger_aggro(self, target):
         """Called when the champion attacks/damages Blue. Handles patience interactions."""
+        if self.is_dead:
+            return
         # Hard reset: completely ignore all aggression
         if self.reset_state == self.RESET_HARD:
             return
@@ -972,6 +921,9 @@ class Blue:
         Returns:
             Damage dealt to the aggro target this frame (0 if none).
         """
+        if self.is_dead:
+            return 0
+
         # Update leash circle timer
         if self.leash_circle_visible:
             self.leash_circle_timer -= dt
